@@ -1,0 +1,25 @@
+[package]
+name = "bulkhead"
+description = "Run a command or an agent process confined by bubblewrap: read-only root, one writable directory, no network unless given, and a kill that takes the whole sandbox."
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.92"
+repository = "https://github.com/PoHsuanLai/bulkhead"
+readme = "README.md"
+publish = false
+
+[[bin]]
+name = "bulkhead-forward"
+path = "src/bin/bulkhead-forward.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
