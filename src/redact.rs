@@ -77,7 +77,15 @@ enum Next {
     SecretFollows,
 }
 
+/// Authorization schemes: the scheme word stays, the credential after it is masked.
+const AUTH_SCHEMES: &[&str] = &["bearer", "basic"];
+
 fn word(w: &str, after_credential: bool) -> (String, Next) {
+    // Before the credential check, so `Authorization: Bearer <token>` masks the token, not the
+    // scheme word.
+    if AUTH_SCHEMES.iter().any(|s| w.eq_ignore_ascii_case(s)) {
+        return (w.to_owned(), Next::SecretFollows);
+    }
     if after_credential || token_shaped(w) {
         return (MASK.to_owned(), Next::Plain);
     }
@@ -93,9 +101,6 @@ fn word(w: &str, after_credential: bool) -> (String, Next) {
             }
             return (format!("{}{}", &w[..=i], MASK), Next::Plain);
         }
-    }
-    if w.eq_ignore_ascii_case("bearer") {
-        return (w.to_owned(), Next::SecretFollows);
     }
     (w.to_owned(), Next::Plain)
 }

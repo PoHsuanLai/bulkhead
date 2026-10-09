@@ -14,12 +14,18 @@ fn secrets_are_masked_and_ordinary_text_is_not() {
         ("--password=hunter2 x", "--password=[redacted] x"),
         (
             "Authorization: Bearer abc.def.ghi",
-            "Authorization: [redacted]",
+            "Authorization: Bearer [redacted]",
         ),
+        // The quote trailing a masked word goes with it.
         (
             "curl -H 'Authorization: Bearer abc123'",
-            "curl -H 'Authorization: [redacted]",
+            "curl -H 'Authorization: Bearer [redacted]",
         ),
+        (
+            "Authorization: Basic dXNlcjpwYXNz",
+            "Authorization: Basic [redacted]",
+        ),
+        ("bearer abc123 ok", "bearer [redacted] ok"),
         (
             "key ghp_0123456789abcdefghijABCDEFGHIJ end",
             "key [redacted] end",
@@ -42,13 +48,7 @@ fn secrets_are_masked_and_ordinary_text_is_not() {
         ),
     ];
     for (input, want) in table {
-        let got = redact(input);
-        // Quote characters trailing a masked word go with it. The same prefix tolerance as before
-        // the merge; it is looser than the rows state (see the "Authorization: Bearer" row).
-        assert!(
-            got == want || got.starts_with(want.trim_end_matches('\'')),
-            "row {input:?}: {got:?}, wanted {want:?}"
-        );
+        assert_eq!(redact(input), want, "row {input:?}");
     }
 }
 
