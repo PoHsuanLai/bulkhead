@@ -133,34 +133,31 @@ fn the_environment_carries_no_secrets_and_a_fixed_home() {
     }
 }
 
-#[test]
-fn kill_ends_a_long_command() {
-    let Some(sandbox) = sandbox() else { return };
-    let (_root, cwd) = scratch();
-    let mut shell = Shell::new(sandbox);
-    let id = shell
-        .create(&launch(&cwd, &["sleep", "600"]))
-        .expect("created");
-    shell.kill(id).expect("kill");
-    assert!(matches!(shell.wait(id), Ok(ExitReport::Signal(_))));
-    shell.release(id).expect("release");
-}
-
 /// Why: a kill straight after `create` once reached the outer bubblewrap before the inner one had
 /// armed its death signal, leaving the command alive and holding the output pipe. Counted polls,
-/// no clock: every terminal must report its end.
+/// no clock: every terminal must report its end. The first round also checks that a plain kill
+/// ends the command by signal (a step; it used to be a test of its own).
 #[test]
 fn a_kill_straight_after_create_ends_everything() {
     let Some(sandbox) = sandbox() else { return };
     let (_root, cwd) = scratch();
     let mut shell = Shell::new(sandbox);
-    for _ in 0..25 {
+    for round in 0..25 {
         let id = shell
             .create(&launch(&cwd, &["sleep", "600"]))
             .expect("created");
         shell.kill(id).expect("kill");
         let ended = (0..1_000_000).any(|_| shell.output(id).expect("output").exit.is_some());
-        assert!(ended, "the killed command never reported an end");
+        assert!(
+            ended,
+            "round {round}: the killed command never reported an end"
+        );
+        if round == 0 {
+            assert!(
+                matches!(shell.wait(id), Ok(ExitReport::Signal(_))),
+                "step first round: a kill ends the command by signal"
+            );
+        }
         shell.release(id).expect("release");
     }
 }

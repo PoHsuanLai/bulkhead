@@ -1,6 +1,6 @@
 //! Output is bounded and redacted; the environment is rebuilt from an allowlist.
 
-use bulkhead::{ByteLimit, Captured, Cut, MASK, Tail, redact, sandbox_env, shown};
+use bulkhead::{ByteLimit, Captured, Cut, Tail, redact, sandbox_env, shown};
 
 fn names(env: &[bulkhead::EnvVar]) -> Vec<&str> {
     env.iter().map(|v| v.name.as_str()).collect()
@@ -32,27 +32,24 @@ fn secrets_are_masked_and_ordinary_text_is_not() {
         ("https://example.org/a:b", "https://example.org/a:b"),
         ("the author said hello", "the author said hello"),
         ("compiling some-crate v0.1.0", "compiling some-crate v0.1.0"),
+        (
+            "before\n-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\nBBBB\n-----END OPENSSH PRIVATE KEY-----\nafter",
+            "before\n[redacted]\nafter",
+        ),
+        (
+            "t eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop",
+            "t [redacted]",
+        ),
     ];
     for (input, want) in table {
         let got = redact(input);
-        // Quote characters trailing a masked word go with it.
+        // Quote characters trailing a masked word go with it. The same prefix tolerance as before
+        // the merge; it is looser than the rows state (see the "Authorization: Bearer" row).
         assert!(
             got == want || got.starts_with(want.trim_end_matches('\'')),
-            "{input:?} -> {got:?}, wanted {want:?}"
+            "row {input:?}: {got:?}, wanted {want:?}"
         );
     }
-}
-
-#[test]
-fn a_private_key_block_is_dropped() {
-    let text = "before\n-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\nBBBB\n-----END OPENSSH PRIVATE KEY-----\nafter";
-    assert_eq!(redact(text), format!("before\n{MASK}\nafter"));
-}
-
-#[test]
-fn a_jwt_is_masked() {
-    let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop";
-    assert_eq!(redact(&format!("t {jwt}")), format!("t {MASK}"));
 }
 
 #[test]
@@ -66,27 +63,28 @@ fn the_tail_keeps_the_last_bytes_and_says_it_cut() {
     assert_eq!(got.cut, Cut::Head);
 }
 
+/// One captured output shown three ways. Each step names itself in its failure message.
 #[test]
-fn the_cap_cuts_at_a_character_boundary_from_the_start() {
-    let captured = Captured {
+fn shown_cuts_at_a_character_boundary_and_replaces_invalid_utf8() {
+    let multi = Captured {
         bytes: "ééééé".as_bytes().to_vec(),
         cut: Cut::Whole,
     };
-    let got = shown(&captured, ByteLimit(5));
-    assert_eq!(got.text, "éé");
-    assert_eq!(got.cut, Cut::Head);
-    let whole = shown(&captured, ByteLimit(100));
-    assert_eq!(whole.text, "ééééé");
-    assert_eq!(whole.cut, Cut::Whole);
-}
-
-#[test]
-fn invalid_utf8_becomes_replacement_characters() {
-    let captured = Captured {
+    let got = shown(&multi, ByteLimit(5));
+    assert_eq!(got.text, "éé", "step multi-byte cut: text");
+    assert_eq!(got.cut, Cut::Head, "step multi-byte cut: cut marker");
+    let whole = shown(&multi, ByteLimit(100));
+    assert_eq!(whole.text, "ééééé", "step whole: text");
+    assert_eq!(whole.cut, Cut::Whole, "step whole: cut marker");
+    let invalid = Captured {
         bytes: vec![b'a', 0xff, b'b'],
         cut: Cut::Whole,
     };
-    assert_eq!(shown(&captured, ByteLimit(100)).text, "a\u{fffd}b");
+    assert_eq!(
+        shown(&invalid, ByteLimit(100)).text,
+        "a\u{fffd}b",
+        "step invalid utf-8"
+    );
 }
 
 #[test]

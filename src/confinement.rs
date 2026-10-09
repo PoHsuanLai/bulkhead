@@ -55,20 +55,31 @@ pub(crate) fn confinement(share: Share, hidden: &[&str]) -> Vec<String> {
 mod tests {
     use super::*;
 
+    /// Both shares share the prefix (capabilities dropped, hidden directories emptied); only
+    /// the host network adds `--share-net`. Each step names its share in the failure message.
     #[test]
-    fn the_prefix_drops_capabilities_and_empties_the_hidden_directories() {
-        let args = confinement(Share::Nothing, &["/home", "/tmp"]);
-        assert_eq!(
-            &args[..3],
-            ["--die-with-parent", "--new-session", "--unshare-all"]
-        );
-        assert!(args.windows(2).any(|w| w == ["--cap-drop", "ALL"]));
-        assert!(args.windows(2).any(|w| w == ["--tmpfs", "/home"]));
-        assert!(!args.contains(&"--share-net".to_owned()));
-    }
-
-    #[test]
-    fn only_the_host_network_shares_the_net_namespace() {
-        assert!(confinement(Share::HostNet, &[]).contains(&"--share-net".to_owned()));
+    fn the_prefix_is_shared_and_only_the_host_network_shares_the_net_namespace() {
+        let cases = [(Share::Nothing, false), (Share::HostNet, true)];
+        for (share, shares_net) in cases {
+            let args = confinement(share, &["/home", "/tmp"]);
+            assert_eq!(
+                &args[..3],
+                ["--die-with-parent", "--new-session", "--unshare-all"],
+                "{share:?}: prefix"
+            );
+            assert!(
+                args.windows(2).any(|w| w == ["--cap-drop", "ALL"]),
+                "{share:?}: cap-drop"
+            );
+            assert!(
+                args.windows(2).any(|w| w == ["--tmpfs", "/home"]),
+                "{share:?}: /home emptied"
+            );
+            assert_eq!(
+                args.contains(&"--share-net".to_owned()),
+                shares_net,
+                "{share:?}: --share-net"
+            );
+        }
     }
 }

@@ -40,25 +40,35 @@ fn with_no_network_the_namespace_is_new_and_nothing_is_shared() {
     assert_eq!(args.last().map(String::as_str), Some("--stdio"));
 }
 
+/// Only host mode shares the host network, and it binds back the resolver files. Steps:
+/// "host shares the network", "host binds the resolver files", then the None run has neither.
 #[test]
-fn only_host_mode_shares_the_host_network() {
-    let args = agent_bwrap_args(&run(AgentNet::Host, Vec::new()), &[]);
-    assert!(has(&args, &["--share-net"]));
-}
-
-#[test]
-fn host_mode_binds_back_only_the_resolver_files() {
+fn host_mode_shares_the_network_and_binds_back_only_the_resolver_files() {
     // /etc/resolv.conf is often a link into /run, which the sandbox empties: without these the
     // agent has the network but cannot resolve a name.
     let host = agent_bwrap_args(&run(AgentNet::Host, Vec::new()), &["/run"]);
+    assert!(has(&host, &["--share-net"]), "step host shares the network");
     for file in RESOLVER_FILES {
-        assert!(has(&host, &["--ro-bind-try", file, file]), "{file}");
+        assert!(
+            has(&host, &["--ro-bind-try", file, file]),
+            "step host resolver binds: {file}"
+        );
     }
     let tmpfs = host.iter().position(|a| a == "--tmpfs");
     let bind = host.iter().position(|a| a == "--ro-bind-try");
-    assert!(tmpfs < bind, "the binds come after /run is emptied");
+    assert!(
+        tmpfs < bind,
+        "step host binds: the binds come after /run is emptied"
+    );
     let none = agent_bwrap_args(&run(AgentNet::None, Vec::new()), &["/run"]);
-    assert!(!none.iter().any(|a| a == "--ro-bind-try"));
+    assert!(
+        !none.iter().any(|a| a == "--share-net"),
+        "step none: no shared network"
+    );
+    assert!(
+        !none.iter().any(|a| a == "--ro-bind-try"),
+        "step none: no resolver binds"
+    );
 }
 
 #[test]
