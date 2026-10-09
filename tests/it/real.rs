@@ -166,6 +166,46 @@ fn a_kill_straight_after_create_ends_everything() {
     }
 }
 
+/// Why: the same race under load. Many threads create and kill at once, so the outer bubblewrap
+/// is often killed while the inner one is still setting up. Counted polls, no clock; a command
+/// that survives shows as a terminal that never reports its end.
+#[test]
+fn parallel_kills_straight_after_create_end_everything() {
+    const THREADS: usize = 16;
+    const ROUNDS: usize = 12;
+    let Some(sandbox) = sandbox() else { return };
+    let (_root, cwd) = scratch();
+    let stuck: usize = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let sandbox = sandbox.clone();
+                let cwd = cwd.clone();
+                scope.spawn(move || {
+                    let mut shell = Shell::new(sandbox);
+                    (0..ROUNDS)
+                        .filter(|_| {
+                            let id = shell
+                                .create(&launch(&cwd, &["sleep", "600"]))
+                                .expect("created");
+                            shell.kill(id).expect("kill");
+                            let ended = (0..200_000)
+                                .any(|_| shell.output(id).expect("output").exit.is_some());
+                            // A survivor keeps the pipe open; its drop would block, so the
+                            // test ends here and reports instead of releasing it.
+                            if ended {
+                                shell.release(id).expect("release");
+                            }
+                            !ended
+                        })
+                        .count()
+                })
+            })
+            .collect();
+        workers.into_iter().map(|w| w.join().expect("worker")).sum()
+    });
+    assert_eq!(stuck, 0, "commands survived a kill straight after create");
+}
+
 #[test]
 fn a_cwd_that_is_not_a_directory_or_is_too_shallow_cannot_be_sandboxed() {
     let Some(sandbox) = sandbox() else { return };

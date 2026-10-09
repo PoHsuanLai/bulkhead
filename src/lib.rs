@@ -16,6 +16,7 @@
 mod agent;
 mod bwrap;
 mod bwrap_job;
+mod bwrap_kill;
 pub mod cli;
 mod confinement;
 mod env;

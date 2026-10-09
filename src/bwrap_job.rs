@@ -1,19 +1,10 @@
 //! A running bubblewrap process: its output is read by one thread into a bounded tail, and
-//! killing it (or dropping it) kills bubblewrap, whose pid namespace takes every descendant with
-//! it.
+//! killing it (or dropping it) takes the whole sandbox with it (`bwrap_kill`).
 //!
-//! **Why `spawn` waits for the command to exist.** Bubblewrap is two processes: the one we start,
-//! and the pid-1 of the new pid namespace it forks, which then forks the command. The inner one
-//! arms `PR_SET_PDEATHSIG` (from `--die-with-parent`) only part-way through its setup. A SIGKILL
-//! to the outer one before that leaves the inner one and the command alive and reparented, still
-//! holding the output pipe, so a reader waiting for the pipe's end never returns (they even
-//! ignore SIGTERM). The command is forked after the signal is armed, so `spawn` returns only once
-//! the inner process has a child of its own (read from `/proc/<pid>/task/<pid>/children`), or
-//! once bubblewrap has already ended. From then on killing the outer process takes everything.
-//! `--info-fd` would say the same, but std can pass a child only stdin, stdout and stderr, and
-//! each of those carries the command's own input or output. A process group does not help
-//! either: `--new-session` puts the inner process in a session of its own. Where `/proc` has no
-//! `children` file the wait is skipped, as it was before.
+//! Waiting for the command to exist, then killing the outer process, was not enough: the outer
+//! process may die before its child has armed `PR_SET_PDEATHSIG`, however long `spawn` waits for
+//! some sign of progress, and a load spike can make that window long. So `spawn` waits for
+//! nothing and `kill` does not rely on the death signal at all.
 
 use crate::output::Tail;
 use crate::sandbox::{ByteLimit, Captured, ExitReport, Job, KILLED, StartFault};
@@ -21,46 +12,6 @@ use std::io::Read;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
-use std::time::Duration;
-
-/// How often `spawn` looks for the command, and how many looks it gives it: setup takes
-/// milliseconds, so the bound is only there so a broken `bwrap` cannot hold `spawn` forever.
-const LOOK_EVERY: Duration = Duration::from_micros(200);
-const LOOKS: u32 = 50_000;
-
-/// The pids `pid` has forked, or `None` where the kernel does not list them.
-fn children(pid: u32) -> Option<Vec<u32>> {
-    let text = std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/children")).ok()?;
-    Some(
-        text.split_whitespace()
-            .filter_map(|w| w.parse().ok())
-            .collect(),
-    )
-}
-
-/// Whether the inner process has forked the command, which it does after arming its death
-/// signal.
-fn command_exists(outer: u32) -> Option<bool> {
-    let inner = children(outer)?;
-    Some(
-        inner
-            .iter()
-            .any(|i| children(*i).is_some_and(|c| !c.is_empty())),
-    )
-}
-
-/// Waits until a kill of `child` is safe: the command exists, or bubblewrap is already over.
-fn until_killable(child: &mut Child) {
-    for _ in 0..LOOKS {
-        if !matches!(child.try_wait(), Ok(None)) {
-            return;
-        }
-        match command_exists(child.id()) {
-            Some(false) => std::thread::sleep(LOOK_EVERY),
-            Some(true) | None => return,
-        }
-    }
-}
 
 fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -115,10 +66,9 @@ impl BwrapJob {
         let errors = writer.try_clone().map_err(|_| StartFault::Spawn)?;
         command.stdin(Stdio::null()).stdout(writer).stderr(errors);
         own_group(&mut command);
-        let mut child = command.spawn().map_err(|_| StartFault::Spawn)?;
+        let child = command.spawn().map_err(|_| StartFault::Spawn)?;
         // The command still holds the write ends; closing them lets the reader see the end.
         drop(command);
-        until_killable(&mut child);
         let tail = Arc::new(Mutex::new(Tail::new(keep)));
         let sink = Arc::clone(&tail);
         let thread = std::thread::spawn(move || {
@@ -174,13 +124,13 @@ impl Job for BwrapJob {
     }
 
     fn kill(&mut self) {
-        let _ = self.child.kill();
+        crate::bwrap_kill::kill_all(&mut self.child);
     }
 }
 
 impl Drop for BwrapJob {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        crate::bwrap_kill::kill_all(&mut self.child);
         let _ = self.child.wait();
     }
 }
