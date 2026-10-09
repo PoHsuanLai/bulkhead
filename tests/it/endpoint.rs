@@ -22,17 +22,12 @@ fn abs(path: &Path) -> AbsPath {
 }
 
 fn run_in_sandbox(program: &Path, net: AgentNet, cwd: &Path, script: &str) -> Option<String> {
-    let run = AgentRun {
-        argv: Argv::new("bash", &["-c".to_owned(), script.to_owned()]).expect("argv"),
-        cwd: abs(cwd),
-        env: vec![EnvVar {
-            name: "PATH".to_owned(),
-            value: "/usr/bin:/bin".to_owned(),
-        }],
-        net,
-        binds: Vec::new(),
-        overlays: Vec::new(),
-    };
+    let env = vec![EnvVar {
+        name: "PATH".to_owned(),
+        value: "/usr/bin:/bin".to_owned(),
+    }];
+    let argv = Argv::new("bash", &["-c".to_owned(), script.to_owned()]).expect("argv");
+    let run = AgentRun::new(argv, abs(cwd), env, net);
     let out = Command::new(program)
         .args(agent_bwrap_args(&run, &present_hidden()))
         .env_clear()
@@ -77,11 +72,11 @@ fn the_agent_reaches_the_endpoint_through_the_forwarder_and_the_bridge() {
         conn.read_exact(&mut buf).expect("read");
         conn.write_all(b"pong\n").expect("write");
     });
-    let net = AgentNet::Endpoint(EndpointBind {
-        forwarder: abs(Path::new(env!("CARGO_BIN_EXE_bulkhead-forward"))),
-        socket: abs(&socket),
+    let net = AgentNet::Endpoint(EndpointBind::new(
+        abs(Path::new(env!("CARGO_BIN_EXE_bulkhead-forward"))),
+        abs(&socket),
         port,
-    });
+    ));
     let script = CLIENT.replace("PORT", &port.to_string());
     let Some(out) = run_in_sandbox(&program, net, &cwd, &script) else {
         return;

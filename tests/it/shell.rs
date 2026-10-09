@@ -7,15 +7,14 @@ use bulkhead::{Argv, Cut, ExitReport, Launch, MAX_TERMINALS, Network, Shell, She
 
 fn launch(line: &[&str]) -> Launch {
     let words: Vec<String> = line.iter().map(|s| (*s).to_owned()).collect();
-    Launch {
-        argv: Argv::new(&words[0], &words[1..]).expect("argv"),
-        cwd: AbsPath::parse("/work/app").expect("cwd"),
-        env: vec![
-            ("API_TOKEN".to_owned(), "hunter2".to_owned()),
-            ("LANG".to_owned(), "C".to_owned()),
-        ],
-        limit: None,
-    }
+    Launch::new(
+        Argv::new(&words[0], &words[1..]).expect("argv"),
+        AbsPath::parse("/work/app").expect("cwd"),
+    )
+    .with_env(vec![
+        ("API_TOKEN".to_owned(), "hunter2".to_owned()),
+        ("LANG".to_owned(), "C".to_owned()),
+    ])
 }
 
 #[test]

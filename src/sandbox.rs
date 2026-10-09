@@ -46,6 +46,7 @@ impl std::fmt::Debug for EnvVar {
 
 /// Whether the command may reach the network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum Network {
     /// No interface at all, not even loopback: the default, and the only one the terminal
     /// methods ask for.
@@ -55,12 +56,32 @@ pub enum Network {
     Host,
 }
 
+impl RunSpec {
+    /// A command to run in `cwd` with `env`, on `network`, keeping `keep` bytes of output.
+    pub fn new(
+        argv: Argv,
+        cwd: AbsPath,
+        env: Vec<EnvVar>,
+        network: Network,
+        keep: ByteLimit,
+    ) -> Self {
+        Self {
+            argv,
+            cwd,
+            env,
+            network,
+            keep,
+        }
+    }
+}
+
 /// How many bytes of output a job keeps (the tail).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ByteLimit(pub usize);
 
 /// Everything a sandbox needs to run one command.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RunSpec {
     /// The command.
     pub argv: Argv,
@@ -115,6 +136,7 @@ pub trait Job: Send + std::fmt::Debug {
 
 /// Why a job did not start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum StartFault {
     /// The sandbox cannot confine this command; nothing was run.
     #[error("cannot sandbox: {0}")]

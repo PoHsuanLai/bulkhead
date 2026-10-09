@@ -11,17 +11,15 @@ fn abs(text: &str) -> AbsPath {
 }
 
 fn run(net: AgentNet, binds: Vec<Bind>) -> AgentRun {
-    AgentRun {
-        argv: Argv::new("claude-agent-acp", &["--stdio".to_owned()]).expect("argv"),
-        cwd: abs("/work/project"),
-        env: vec![EnvVar {
-            name: "HOME".to_owned(),
-            value: "/home/u".to_owned(),
-        }],
-        net,
-        binds,
-        overlays: Vec::new(),
-    }
+    let env = vec![EnvVar {
+        name: "HOME".to_owned(),
+        value: "/home/u".to_owned(),
+    }];
+    let argv = Argv::new("claude-agent-acp", &["--stdio".to_owned()]).expect("argv");
+    binds.into_iter().fold(
+        AgentRun::new(argv, abs("/work/project"), env, net),
+        AgentRun::with_bind,
+    )
 }
 
 fn has(args: &[String], seq: &[&str]) -> bool {
@@ -65,11 +63,11 @@ fn host_mode_binds_back_only_the_resolver_files() {
 
 #[test]
 fn endpoint_only_starts_the_forwarder_first_and_binds_one_socket() {
-    let bind = EndpointBind {
-        forwarder: abs("/opt/bulkhead/bulkhead-forward"),
-        socket: abs("/run/user/1000/bulkhead/ep.sock"),
-        port: 40123,
-    };
+    let bind = EndpointBind::new(
+        abs("/opt/bulkhead/bulkhead-forward"),
+        abs("/run/user/1000/bulkhead/ep.sock"),
+        40123,
+    );
     let args = agent_bwrap_args(&run(AgentNet::Endpoint(bind), Vec::new()), &[]);
     assert!(!args.iter().any(|a| a == "--share-net"));
     assert!(has(
@@ -109,14 +107,8 @@ fn endpoint_only_starts_the_forwarder_first_and_binds_one_socket() {
 #[test]
 fn extra_binds_come_after_the_emptied_directories_and_keep_their_access() {
     let binds = vec![
-        Bind {
-            path: abs("/home/u/.local/node"),
-            access: Access::ReadOnly,
-        },
-        Bind {
-            path: abs("/home/u/.claude"),
-            access: Access::ReadWrite,
-        },
+        Bind::new(abs("/home/u/.local/node"), Access::ReadOnly),
+        Bind::new(abs("/home/u/.claude"), Access::ReadWrite),
     ];
     let args = agent_bwrap_args(&run(AgentNet::None, binds), &["/home"]);
     let at = |seq: &[&str]| {
@@ -132,11 +124,7 @@ fn extra_binds_come_after_the_emptied_directories_and_keep_their_access() {
 
 #[test]
 fn a_mode_and_its_endpoint_must_agree() {
-    let bind = EndpointBind {
-        forwarder: abs("/opt/f"),
-        socket: abs("/run/s"),
-        port: 1,
-    };
+    let bind = EndpointBind::new(abs("/opt/f"), abs("/run/s"), 1);
     assert!(AgentNet::of(NetworkMode::EndpointOnly, None).is_err());
     assert!(AgentNet::of(NetworkMode::None, Some(bind.clone())).is_err());
     assert!(AgentNet::of(NetworkMode::Host, Some(bind.clone())).is_err());
@@ -151,12 +139,14 @@ fn a_mode_and_its_endpoint_must_agree() {
 
 #[test]
 fn a_command_with_the_host_network_resolves_names_too() {
-    let spec = |network| RunSpec {
-        argv: Argv::new("curl", &["example.org".to_owned()]).expect("argv"),
-        cwd: abs("/work/project"),
-        env: Vec::new(),
-        network,
-        keep: ByteLimit(1024),
+    let spec = |network| {
+        RunSpec::new(
+            Argv::new("curl", &["example.org".to_owned()]).expect("argv"),
+            abs("/work/project"),
+            Vec::new(),
+            network,
+            ByteLimit(1024),
+        )
     };
     let host = bwrap_args(&spec(Network::Host), &["/run"]);
     for file in RESOLVER_FILES {
@@ -168,15 +158,11 @@ fn a_command_with_the_host_network_resolves_names_too() {
 
 #[test]
 fn an_overlay_is_a_read_only_mount_of_another_file_after_the_binds() {
-    let binds = vec![Bind {
-        path: abs("/home/u/.gemini"),
-        access: Access::ReadWrite,
-    }];
-    let mut with = run(AgentNet::None, binds);
-    with.overlays = vec![bulkhead::Overlay {
-        from: abs("/run/d/settings.json"),
-        to: abs("/home/u/.gemini/antigravity-acp/settings.json"),
-    }];
+    let binds = vec![Bind::new(abs("/home/u/.gemini"), Access::ReadWrite)];
+    let with = run(AgentNet::None, binds).with_overlay(bulkhead::Overlay::new(
+        abs("/run/d/settings.json"),
+        abs("/home/u/.gemini/antigravity-acp/settings.json"),
+    ));
     let args = agent_bwrap_args(&with, &["/home"]);
     let at = |seq: &[&str]| {
         args.windows(seq.len())
@@ -196,13 +182,13 @@ fn an_overlay_is_a_read_only_mount_of_another_file_after_the_binds() {
 /// (namespaces, capabilities, read-only root, emptied directories); both begin with one prefix.
 #[test]
 fn the_terminal_and_the_agent_sandbox_begin_with_the_same_confinement() {
-    let spec = RunSpec {
-        argv: Argv::new("true", &[]).expect("argv"),
-        cwd: abs("/work/project"),
-        env: Vec::new(),
-        network: Network::Off,
-        keep: ByteLimit(1024),
-    };
+    let spec = RunSpec::new(
+        Argv::new("true", &[]).expect("argv"),
+        abs("/work/project"),
+        Vec::new(),
+        Network::Off,
+        ByteLimit(1024),
+    );
     let terminal = bwrap_args(&spec, &["/run", "/home"]);
     let agent = agent_bwrap_args(&run(AgentNet::None, Vec::new()), &["/run", "/home"]);
     let prefix = [

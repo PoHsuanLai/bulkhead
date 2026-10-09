@@ -26,6 +26,7 @@ pub struct TermId(pub u64);
 
 /// A request to run one command.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Launch {
     /// The command.
     pub argv: Argv,
@@ -37,8 +38,35 @@ pub struct Launch {
     pub limit: Option<u64>,
 }
 
+impl Launch {
+    /// A request to run `argv` in `cwd`, with no extra environment and the default output limit.
+    pub fn new(argv: Argv, cwd: AbsPath) -> Self {
+        Self {
+            argv,
+            cwd,
+            env: Vec::new(),
+            limit: None,
+        }
+    }
+
+    /// The same request with these environment variables (only the allowlist survives).
+    #[must_use]
+    pub fn with_env(mut self, env: Vec<(String, String)>) -> Self {
+        self.env = env;
+        self
+    }
+
+    /// The same request keeping at most `bytes` of output (clamped to `MAX_KEEP`).
+    #[must_use]
+    pub fn with_limit(mut self, bytes: u64) -> Self {
+        self.limit = Some(bytes);
+        self
+    }
+}
+
 /// Why a terminal call failed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum ShellFault {
     /// The command cannot be sandboxed; nothing ran.
     #[error("cannot sandbox: {0}")]
@@ -79,6 +107,29 @@ struct Term<J> {
 }
 
 /// The terminals of one connection.
+///
+/// A command runs only inside the sandbox it is given. This example uses the scripted
+/// `FakeSandbox`, so it needs no `bwrap` and no privileges:
+///
+/// ```
+/// use bulkhead::fake::{FakeSandbox, Script};
+/// use bulkhead::{AbsPath, Argv, ExitReport, Launch, Shell};
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let (sandbox, seen) = FakeSandbox::ready(vec![Script::done("hello\n", 0)]);
+/// let mut shell = Shell::new(sandbox);
+///
+/// let argv = Argv::new("echo", &["hello".to_owned()]).ok_or("no program")?;
+/// let cwd = AbsPath::parse("/home/u/project")?;
+/// let id = shell.create(&Launch::new(argv, cwd))?;
+///
+/// assert_eq!(shell.wait(id)?, ExitReport::Code(0));
+/// assert_eq!(shell.output(id)?.shown.text, "hello\n");
+/// assert_eq!(seen.started()[0].argv.line(), "echo hello");
+/// shell.release(id)?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug)]
 pub struct Shell<S: Sandbox> {
     sandbox: S,

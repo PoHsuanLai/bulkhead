@@ -143,7 +143,21 @@ pub enum Detected {
 }
 
 impl Detected {
-    /// Looks for a sandbox in the `:`-separated `path`.
+    /// Looks for a sandbox in the `:`-separated `path`. Compiled but not run by the doc tests:
+    /// it starts a real `bwrap`, which needs unprivileged user namespaces.
+    ///
+    /// ```no_run
+    /// use bulkhead::{AbsPath, Argv, Detected, Launch, Shell};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let sandbox = Detected::probe("/usr/bin:/bin");
+    /// let mut shell = Shell::new(sandbox);
+    /// let argv = Argv::new("ls", &[]).ok_or("no program")?;
+    /// let id = shell.create(&Launch::new(argv, AbsPath::parse("/home/u/project")?))?;
+    /// println!("{:?}", shell.wait(id)?);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn probe(path: &str) -> Self {
         match BwrapSandbox::detect(path) {
             Ok(found) => Detected::Bwrap(found),

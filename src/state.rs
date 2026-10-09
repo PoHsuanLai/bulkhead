@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 /// Why a command cannot run in the sandbox.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, thiserror::Error)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CannotSandbox {
     /// No sandbox program (`bwrap`) is installed.
     #[error("no sandbox program is installed")]

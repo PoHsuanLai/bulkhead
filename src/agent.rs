@@ -23,6 +23,7 @@ pub const INSIDE_SOCKET: &str = "/run/bulkhead/ep.sock";
 
 /// How an extra path is bound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Access {
     /// Visible, not writable.
     ReadOnly,
@@ -32,6 +33,7 @@ pub enum Access {
 
 /// One extra path made visible inside the sandbox at the same path.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Bind {
     /// The path, on the host and inside.
     pub path: AbsPath,
@@ -43,6 +45,7 @@ pub struct Bind {
 /// run, over the agent's own file of that name. The agent cannot change it, and the host's file is
 /// not touched (bubblewrap mounts over it).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Overlay {
     /// The file on the host.
     pub from: AbsPath,
@@ -52,6 +55,7 @@ pub struct Overlay {
 
 /// Everything needed to confine one agent process.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct AgentRun {
     /// The agent command.
     pub argv: Argv,
@@ -68,6 +72,48 @@ pub struct AgentRun {
     pub binds: Vec<Bind>,
     /// Files the caller wrote for this run, mounted after the binds so they win over them.
     pub overlays: Vec<Overlay>,
+}
+
+impl Bind {
+    /// `path`, visible at the same path inside, with `access`.
+    pub fn new(path: AbsPath, access: Access) -> Self {
+        Self { path, access }
+    }
+}
+
+impl Overlay {
+    /// The host file `from`, shown inside at `to`, read-only.
+    pub fn new(from: AbsPath, to: AbsPath) -> Self {
+        Self { from, to }
+    }
+}
+
+impl AgentRun {
+    /// A run of `argv` in `cwd`, with `env` and `net`, and no extra binds or overlays.
+    pub fn new(argv: Argv, cwd: AbsPath, env: Vec<EnvVar>, net: AgentNet) -> Self {
+        Self {
+            argv,
+            cwd,
+            env,
+            net,
+            binds: Vec::new(),
+            overlays: Vec::new(),
+        }
+    }
+
+    /// The same run with one more extra bind, after the ones already there.
+    #[must_use]
+    pub fn with_bind(mut self, bind: Bind) -> Self {
+        self.binds.push(bind);
+        self
+    }
+
+    /// The same run with one more overlay, after the ones already there.
+    #[must_use]
+    pub fn with_overlay(mut self, overlay: Overlay) -> Self {
+        self.overlays.push(overlay);
+        self
+    }
 }
 
 /// The `bwrap` arguments for `run`, hiding the `hidden` directories. Pure.
@@ -129,9 +175,11 @@ fn forwarder_words(bind: &EndpointBind, agent: &[String]) -> Vec<String> {
 
 /// The directories to empty: those of `HIDDEN` that exist on this host.
 pub fn present_hidden() -> Vec<&'static str> {
-    HIDDEN
-        .iter()
-        .copied()
-        .filter(|d| std::path::Path::new(d).is_dir())
-        .collect()
+    present_hidden_where(|d| std::path::Path::new(d).is_dir())
+}
+
+/// The directories of `HIDDEN` for which `exists` is true. The host's view is supplied by the
+/// caller, so a test or another host can answer it.
+pub fn present_hidden_where(exists: impl Fn(&str) -> bool) -> Vec<&'static str> {
+    HIDDEN.iter().copied().filter(|d| exists(d)).collect()
 }

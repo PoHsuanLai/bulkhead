@@ -10,6 +10,7 @@ pub struct AbsPath(String);
 
 /// Why text is not an absolute path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum PathFault {
     /// It does not start with `/`.
     #[error("a path must be absolute")]

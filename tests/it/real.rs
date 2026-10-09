@@ -19,16 +19,15 @@ fn sandbox() -> Option<BwrapSandbox> {
 
 fn launch(cwd: &Path, line: &[&str]) -> Launch {
     let words: Vec<String> = line.iter().map(|s| (*s).to_owned()).collect();
-    Launch {
-        argv: Argv::new(&words[0], &words[1..]).expect("argv"),
-        cwd: AbsPath::parse(cwd.to_str().expect("utf8")).expect("abs"),
-        // A secret the requester tries to pass, and a fake home: neither may arrive.
-        env: vec![
-            ("API_TOKEN".to_owned(), "hunter2-secret".to_owned()),
-            ("HOME".to_owned(), "/home/scratch-secret".to_owned()),
-        ],
-        limit: None,
-    }
+    Launch::new(
+        Argv::new(&words[0], &words[1..]).expect("argv"),
+        AbsPath::parse(cwd.to_str().expect("utf8")).expect("abs"),
+    )
+    // A secret the requester tries to pass, and a fake home: neither may arrive.
+    .with_env(vec![
+        ("API_TOKEN".to_owned(), "hunter2-secret".to_owned()),
+        ("HOME".to_owned(), "/home/scratch-secret".to_owned()),
+    ])
 }
 
 /// Runs `sh -c script` in `cwd` and returns its output and exit.
@@ -211,12 +210,10 @@ fn a_cwd_that_is_not_a_directory_or_is_too_shallow_cannot_be_sandboxed() {
     let Some(sandbox) = sandbox() else { return };
     let mut shell = Shell::new(sandbox);
     for bad in ["/", "/home", "/does/not/exist/at/all"] {
-        let ask = Launch {
-            argv: Argv::new("ls", &[]).expect("argv"),
-            cwd: AbsPath::parse(bad).expect("abs"),
-            env: Vec::new(),
-            limit: None,
-        };
+        let ask = Launch::new(
+            Argv::new("ls", &[]).expect("argv"),
+            AbsPath::parse(bad).expect("abs"),
+        );
         assert!(
             matches!(
                 shell.create(&ask),

@@ -37,6 +37,7 @@ pub(crate) fn resolver_binds() -> Vec<String> {
 /// What the caller allows a program. `None` is the default.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum NetworkMode {
     /// No network.
     #[default]
@@ -49,6 +50,7 @@ pub enum NetworkMode {
 
 /// Where the forwarder sits inside the sandbox and what it forwards to.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct EndpointBind {
     /// The forwarder program on the host (read-only inside).
     pub forwarder: AbsPath,
@@ -58,8 +60,20 @@ pub struct EndpointBind {
     pub port: u16,
 }
 
+impl EndpointBind {
+    /// The forwarder program, its host socket, and the loopback port the agent connects to.
+    pub fn new(forwarder: AbsPath, socket: AbsPath, port: u16) -> Self {
+        Self {
+            forwarder,
+            socket,
+            port,
+        }
+    }
+}
+
 /// A mode with what it needs: the thing `agent_bwrap_args` reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AgentNet {
     /// Loopback only.
     None,
@@ -72,6 +86,7 @@ pub enum AgentNet {
 /// Why a mode could not be made into a plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("the endpoint-only mode needs an endpoint, and the other modes take none")]
+#[non_exhaustive]
 pub struct NetFault;
 
 impl AgentNet {
