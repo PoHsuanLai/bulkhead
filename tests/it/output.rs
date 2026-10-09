@@ -26,6 +26,10 @@ fn secrets_are_masked_and_ordinary_text_is_not() {
             "Authorization: Basic [redacted]",
         ),
         ("bearer abc123 ok", "bearer [redacted] ok"),
+        // A scheme word with no credential after it masks nothing, not even the next line.
+        ("Bearer", "Bearer"),
+        ("Authorization: Bearer", "Authorization: Bearer"),
+        ("bearer\nnext line", "bearer\nnext line"),
         (
             "key ghp_0123456789abcdefghijABCDEFGHIJ end",
             "key [redacted] end",
