@@ -10,12 +10,12 @@
 //! the bubblewrap process, never in its arguments, so a key is not on a command line);
 //! no capabilities; a new session; death with its parent.
 
-use crate::AbsPath;
 use crate::bwrap::HIDDEN;
 use crate::confinement::{Share, confinement};
 use crate::net::{AgentNet, EndpointBind};
 use crate::profile::Profile;
 use crate::sandbox::{Argv, EnvVar};
+use crate::{AbsPath, RootState};
 
 /// Where the forwarder and its socket appear inside the sandbox.
 pub const INSIDE_FORWARDER: &str = "/run/bulkhead/forward";
@@ -73,6 +73,18 @@ pub struct AgentRun {
     pub binds: Vec<Bind>,
     /// Files the caller wrote for this run, mounted after the binds so they win over them.
     pub overlays: Vec<Overlay>,
+    /// Paths inside `cwd` made read-only again after the workspace is bound writable (a `.git`
+    /// directory, say). Added with `with_protect`.
+    pub protect: Vec<AbsPath>,
+}
+
+/// Why a path cannot be protected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ProtectFault {
+    /// The path is not strictly inside the working directory.
+    #[error("a protected path must be inside the working directory")]
+    OutsideCwd,
 }
 
 impl Bind {
@@ -99,6 +111,7 @@ impl AgentRun {
             net,
             binds: Vec::new(),
             overlays: Vec::new(),
+            protect: Vec::new(),
         }
     }
 
@@ -107,6 +120,23 @@ impl AgentRun {
     pub fn with_bind(mut self, bind: Bind) -> Self {
         self.binds.push(bind);
         self
+    }
+
+    /// The same run with `path` read-only inside the writable workspace. The path must be
+    /// strictly inside `cwd`. When the arguments are built, a path that does not exist is
+    /// skipped (nothing to protect) and so is a symbolic link (a bind would follow it out of the
+    /// workspace); skipping never makes the sandbox more open than without the path.
+    pub fn with_protect(mut self, path: AbsPath) -> Result<Self, ProtectFault> {
+        let inside = path
+            .as_str()
+            .strip_prefix(self.cwd.as_str())
+            .is_some_and(|rest| rest.starts_with('/'))
+            || self.cwd.is_root() == RootState::Root && path.is_root() == RootState::Below;
+        if !inside {
+            return Err(ProtectFault::OutsideCwd);
+        }
+        self.protect.push(path);
+        Ok(self)
     }
 
     /// The same run with one more overlay, after the ones already there.
@@ -137,6 +167,11 @@ pub fn agent_bwrap_args(run: &AgentRun, hidden: &[&str], profile: &Profile) -> V
     }
     let cwd = run.cwd.as_str();
     args.extend(["--bind", cwd, cwd, "--chdir", cwd].map(str::to_owned));
+    // After the writable workspace, so each layers read-only over it.
+    for path in run.protect.iter().filter(|p| protectable(p)) {
+        let path = path.as_str();
+        args.extend(["--ro-bind", path, path].map(str::to_owned));
+    }
     if let AgentNet::Endpoint(bind) = &run.net {
         args.extend([
             "--ro-bind".to_owned(),
@@ -150,6 +185,11 @@ pub fn agent_bwrap_args(run: &AgentRun, hidden: &[&str], profile: &Profile) -> V
     args.push("--".to_owned());
     args.extend(inner(run));
     args
+}
+
+/// Whether `path` exists and is not a symbolic link (judged without following it).
+fn protectable(path: &AbsPath) -> bool {
+    std::fs::symlink_metadata(path.as_str()).is_ok_and(|m| !m.file_type().is_symlink())
 }
 
 /// The words bubblewrap runs: the agent itself, or the forwarder that starts it.

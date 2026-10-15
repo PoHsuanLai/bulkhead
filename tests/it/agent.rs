@@ -264,3 +264,53 @@ fn every_scratch_directory_gets_its_own_size_cap() {
         assert!(has(&args, &["--size", "8388608", "--tmpfs", dir]), "{dir}");
     }
 }
+
+/// Why: a protected path (a `.git` directory) must come after the writable workspace bind, or
+/// the workspace would cover it. Steps: a real directory is bound read-only after the workspace,
+/// a missing one and a symlink are skipped, and a path outside the workspace is refused.
+#[test]
+fn a_protected_path_is_bound_read_only_after_the_workspace() {
+    let root = tempfile::tempdir().expect("scratch");
+    let cwd = root.path().join("proj");
+    std::fs::create_dir_all(cwd.join(".git")).expect("git dir");
+    std::os::unix::fs::symlink("/etc", cwd.join("link")).expect("link");
+    let cwd_text = cwd.to_str().expect("utf8");
+    let inside = |name: &str| abs(&format!("{cwd_text}/{name}"));
+    let base = AgentRun::new(
+        Argv::new("agent", &[]).expect("argv"),
+        abs(cwd_text),
+        Vec::new(),
+        AgentNet::None,
+    );
+    let with = base
+        .clone()
+        .with_protect(inside(".git"))
+        .and_then(|r| r.with_protect(inside("missing")))
+        .and_then(|r| r.with_protect(inside("link")))
+        .expect("inside the workspace");
+    let args = agent_bwrap_args(&with, &[], &Profile::bare());
+    let at = |seq: &[&str]| {
+        args.windows(seq.len())
+            .position(|w| w.iter().map(String::as_str).eq(seq.iter().copied()))
+    };
+    let git = format!("{cwd_text}/.git");
+    let workspace = at(&["--bind", cwd_text, cwd_text]).expect("workspace");
+    let protect = at(&["--ro-bind", &git, &git]).expect("step bound: .git");
+    assert!(workspace < protect, "step order: after the workspace");
+    assert_eq!(
+        args.iter().filter(|a| a.starts_with(cwd_text)).count(),
+        2 + 2 + 1,
+        "step skipped: only the workspace, .git and --chdir show up"
+    );
+    for bad in [
+        cwd_text.to_owned(),
+        "/etc".to_owned(),
+        format!("{cwd_text}x/y"),
+    ] {
+        assert_eq!(
+            base.clone().with_protect(abs(&bad)).err(),
+            Some(bulkhead::ProtectFault::OutsideCwd),
+            "step refused: {bad}"
+        );
+    }
+}

@@ -35,7 +35,7 @@ mod state;
 mod tool;
 
 pub use agent::{
-    Access, AgentRun, Bind, INSIDE_FORWARDER, INSIDE_SOCKET, Overlay, agent_bwrap_args,
+    Access, AgentRun, Bind, ProtectFault, INSIDE_FORWARDER, INSIDE_SOCKET, Overlay, agent_bwrap_args,
     present_hidden, present_hidden_where,
 };
 pub use bwrap::{BwrapSandbox, Detected, HIDDEN, bwrap_args};
