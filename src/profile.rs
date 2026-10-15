@@ -2,13 +2,16 @@
 //! scratch directories are. A `Profile` is plain data, so a test builds one and reads the
 //! arguments.
 
-use crate::harden::Bytes;
+use crate::AbsPath;
+use crate::harden::{Bytes, OptDir};
+use crate::root::Root;
 
 /// What the shared confinement adds to the command line.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Profile {
     tmpfs: Option<Bytes>,
     seccomp: FilterFd,
+    root: Root,
 }
 
 /// Whether the command line tells bubblewrap to read a seccomp filter from `FILTER_FD`.
@@ -35,6 +38,40 @@ impl Profile {
         self
     }
 
+    /// `/opt` visible or not.
+    #[must_use]
+    pub fn with_opt(mut self, opt: OptDir) -> Self {
+        self.root = self.root.with_opt(opt);
+        self
+    }
+
+    /// One more host path visible read-only at the same path.
+    #[must_use]
+    pub fn with_extra_ro(mut self, path: AbsPath) -> Self {
+        self.root = self.root.with_extra_ro(path);
+        self
+    }
+
+    /// Covers the sensitive `/etc` paths (password hashes, sudoers, host keys, saved network
+    /// credentials) that the host has.
+    #[must_use]
+    pub fn covering_host_secrets(self) -> Self {
+        self.covering_secrets_where(|p| std::path::Path::new(p).exists())
+    }
+
+    /// Covers the sensitive `/etc` paths for which `exists` is true; the host's view is supplied
+    /// by the caller, so a test can answer it.
+    #[must_use]
+    pub fn covering_secrets_where(mut self, exists: impl Fn(&str) -> bool) -> Self {
+        self.root = self.root.covering_where(exists);
+        self
+    }
+
+    /// The words that build the visible root.
+    pub(crate) fn root(&self) -> Vec<String> {
+        self.root.args()
+    }
+
     /// Bubblewrap reads a seccomp filter from descriptor 3. Whoever starts the process must
     /// provide it (`BwrapSandbox` does); with this set and no filter, bubblewrap refuses to run.
     #[must_use]
@@ -49,6 +86,17 @@ impl Profile {
             FilterFd::Present => vec!["--seccomp".to_owned(), FILTER_FD.to_owned()],
             FilterFd::Absent => Vec::new(),
         }
+    }
+
+    /// The writable in-memory scratch directories, each with the size cap: `/tmp`, `/var/tmp`
+    /// and `/run`, with `/var` itself holding only `tmp` and a `run` link.
+    pub(crate) fn scratch(&self) -> Vec<String> {
+        let mut args = self.tmpfs("/tmp");
+        args.extend(["--dir", "/var"].map(str::to_owned));
+        args.extend(self.tmpfs("/var/tmp"));
+        args.extend(["--symlink", "../run", "/var/run"].map(str::to_owned));
+        args.extend(self.tmpfs("/run"));
+        args
     }
 
     /// The words for one `--tmpfs dir`: the size cap first (it applies to the next tmpfs only).

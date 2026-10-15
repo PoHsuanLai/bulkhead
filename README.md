@@ -9,7 +9,10 @@ namespaces. bubblewrap runs as a separate process and is never linked.
 
 ## What a confined command gets
 
-- the host filesystem read-only, with `/home`, `/root`, `/run`, `/tmp` and the like emptied
+- an allow-list root, read-only: `/usr`, `/etc` (minus password hashes, sudoers, host keys and
+  saved network credentials), the `/bin` and `/lib*` links, and `/opt` or other paths only when
+  you name them (`Hardening::opt`, `Hardening::extra_ro`); fresh in-memory `/tmp`, `/var/tmp`
+  and `/run`; no `/home`, `/var`, `/mnt`, `/media`, `/sys`
 - one writable place: the working directory you give it (never `/`)
 - no network, unless you ask for the host's (or, for an agent, one forwarded endpoint)
 - a cleared environment rebuilt from an allowlist, with a fixed `PATH` and `HOME`

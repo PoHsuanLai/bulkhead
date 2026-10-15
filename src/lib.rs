@@ -30,6 +30,7 @@ mod output;
 mod path;
 mod profile;
 mod redact;
+mod root;
 mod sandbox;
 mod seccomp;
 mod state;
@@ -37,12 +38,12 @@ mod tool;
 
 pub use agent::{
     Access, AgentRun, Bind, INSIDE_FORWARDER, INSIDE_SOCKET, Overlay, ProtectFault,
-    agent_bwrap_args, present_hidden, present_hidden_where,
+    agent_bwrap_args,
 };
-pub use bwrap::{BwrapSandbox, Detected, HIDDEN, bwrap_args};
+pub use bwrap::{BwrapSandbox, Detected, bwrap_args};
 pub use bwrap_job::BwrapJob;
 pub use env::{SANDBOX_HOME, SANDBOX_PATH, dropped, sandbox_env};
-pub use harden::{AcceptNoLimits, Bytes, Hardening, LimitPolicy, Limits, Seccomp};
+pub use harden::{AcceptNoLimits, Bytes, Hardening, LimitPolicy, Limits, OptDir, Seccomp};
 pub use launch::{Enforcement, UserSession};
 pub use net::{AgentNet, EndpointBind, NetFault, NetworkMode, RESOLVER_FILES};
 pub use output::{Shown, Tail, shown};

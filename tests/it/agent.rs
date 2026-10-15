@@ -30,18 +30,16 @@ fn has(args: &[String], seq: &[&str]) -> bool {
 
 #[test]
 fn with_no_network_the_namespace_is_new_and_nothing_is_shared() {
-    let args = agent_bwrap_args(
-        &run(AgentNet::None, Vec::new()),
-        &["/home", "/tmp"],
-        &Profile::bare(),
-    );
+    let args = agent_bwrap_args(&run(AgentNet::None, Vec::new()), &Profile::bare());
     assert!(has(&args, &["--unshare-all"]));
     assert!(!args.iter().any(|a| a == "--share-net"));
     assert!(has(&args, &["--cap-drop", "ALL"]));
     // The environment is not in the arguments, so a key in it is not on a command line.
     assert!(!args.iter().any(|a| a == "--setenv" || a == "/home/u"));
     assert!(has(&args, &["--bind", "/work/project", "/work/project"]));
-    assert!(has(&args, &["--tmpfs", "/home"]));
+    // The root is an allow-list: /usr is there, /home is not mentioned at all.
+    assert!(has(&args, &["--ro-bind", "/usr", "/usr"]));
+    assert!(!args.iter().any(|a| a == "/home" || a == "/"));
     assert_eq!(args.last().map(String::as_str), Some("--stdio"));
 }
 
@@ -51,11 +49,7 @@ fn with_no_network_the_namespace_is_new_and_nothing_is_shared() {
 fn host_mode_shares_the_network_and_binds_back_only_the_resolver_files() {
     // /etc/resolv.conf is often a link into /run, which the sandbox empties: without these the
     // agent has the network but cannot resolve a name.
-    let host = agent_bwrap_args(
-        &run(AgentNet::Host, Vec::new()),
-        &["/run"],
-        &Profile::bare(),
-    );
+    let host = agent_bwrap_args(&run(AgentNet::Host, Vec::new()), &Profile::bare());
     assert!(has(&host, &["--share-net"]), "step host shares the network");
     for file in RESOLVER_FILES {
         assert!(
@@ -63,23 +57,24 @@ fn host_mode_shares_the_network_and_binds_back_only_the_resolver_files() {
             "step host resolver binds: {file}"
         );
     }
-    let tmpfs = host.iter().position(|a| a == "--tmpfs");
-    let bind = host.iter().position(|a| a == "--ro-bind-try");
+    let run_dir = host.windows(2).position(|w| w == ["--tmpfs", "/run"]);
+    let bind = host
+        .windows(3)
+        .position(|w| w == ["--ro-bind-try", RESOLVER_FILES[0], RESOLVER_FILES[0]]);
     assert!(
-        tmpfs < bind,
+        run_dir.is_some() && run_dir < bind,
         "step host binds: the binds come after /run is emptied"
     );
-    let none = agent_bwrap_args(
-        &run(AgentNet::None, Vec::new()),
-        &["/run"],
-        &Profile::bare(),
-    );
+    let none = agent_bwrap_args(&run(AgentNet::None, Vec::new()), &Profile::bare());
     assert!(
         !none.iter().any(|a| a == "--share-net"),
         "step none: no shared network"
     );
     assert!(
-        !none.iter().any(|a| a == "--ro-bind-try"),
+        !has(
+            &none,
+            &["--ro-bind-try", RESOLVER_FILES[0], RESOLVER_FILES[0]]
+        ),
         "step none: no resolver binds"
     );
 }
@@ -137,13 +132,13 @@ fn extra_binds_come_after_the_emptied_directories_and_keep_their_access() {
         Bind::new(abs("/home/u/.local/node"), Access::ReadOnly),
         Bind::new(abs("/home/u/.claude"), Access::ReadWrite),
     ];
-    let args = agent_bwrap_args(&run(AgentNet::None, binds), &["/home"], &Profile::bare());
+    let args = agent_bwrap_args(&run(AgentNet::None, binds), &Profile::bare());
     let at = |seq: &[&str]| {
         args.windows(seq.len())
             .position(|w| w.iter().map(String::as_str).eq(seq.iter().copied()))
             .expect("present")
     };
-    let hide = at(&["--tmpfs", "/home"]);
+    let hide = at(&["--proc", "/proc"]);
     let ro = at(&["--ro-bind", "/home/u/.local/node", "/home/u/.local/node"]);
     let rw = at(&["--bind", "/home/u/.claude", "/home/u/.claude"]);
     assert!(hide < ro && ro < rw);
@@ -175,12 +170,15 @@ fn a_command_with_the_host_network_resolves_names_too() {
             ByteLimit(1024),
         )
     };
-    let host = bwrap_args(&spec(Network::Host), &["/run"], &Profile::bare());
+    let host = bwrap_args(&spec(Network::Host), &Profile::bare());
     for file in RESOLVER_FILES {
         assert!(has(&host, &["--ro-bind-try", file, file]), "{file}");
     }
-    let none = bwrap_args(&spec(Network::Off), &["/run"], &Profile::bare());
-    assert!(!none.iter().any(|a| a == "--ro-bind-try"));
+    let none = bwrap_args(&spec(Network::Off), &Profile::bare());
+    assert!(!has(
+        &none,
+        &["--ro-bind-try", RESOLVER_FILES[0], RESOLVER_FILES[0]]
+    ));
 }
 
 #[test]
@@ -190,7 +188,7 @@ fn an_overlay_is_a_read_only_mount_of_another_file_after_the_binds() {
         abs("/run/d/settings.json"),
         abs("/home/u/.gemini/antigravity-acp/settings.json"),
     ));
-    let args = agent_bwrap_args(&with, &["/home"], &Profile::bare());
+    let args = agent_bwrap_args(&with, &Profile::bare());
     let at = |seq: &[&str]| {
         args.windows(seq.len())
             .position(|w| w.iter().map(String::as_str).eq(seq.iter().copied()))
@@ -206,7 +204,7 @@ fn an_overlay_is_a_read_only_mount_of_another_file_after_the_binds() {
 }
 
 /// Why: the terminal sandbox and the agent sandbox must not drift apart on the hardening flags
-/// (namespaces, capabilities, read-only root, emptied directories); both begin with one prefix.
+/// (namespaces, capabilities, the allow-list root); both begin with one prefix.
 #[test]
 fn the_terminal_and_the_agent_sandbox_begin_with_the_same_confinement() {
     let spec = RunSpec::new(
@@ -216,12 +214,8 @@ fn the_terminal_and_the_agent_sandbox_begin_with_the_same_confinement() {
         Network::Off,
         ByteLimit(1024),
     );
-    let terminal = bwrap_args(&spec, &["/run", "/home"], &Profile::bare());
-    let agent = agent_bwrap_args(
-        &run(AgentNet::None, Vec::new()),
-        &["/run", "/home"],
-        &Profile::bare(),
-    );
+    let terminal = bwrap_args(&spec, &Profile::bare());
+    let agent = agent_bwrap_args(&run(AgentNet::None, Vec::new()), &Profile::bare());
     let prefix = [
         "--die-with-parent",
         "--new-session",
@@ -229,16 +223,8 @@ fn the_terminal_and_the_agent_sandbox_begin_with_the_same_confinement() {
         "--cap-drop",
         "ALL",
         "--ro-bind",
-        "/",
-        "/",
-        "--dev",
-        "/dev",
-        "--proc",
-        "/proc",
-        "--tmpfs",
-        "/run",
-        "--tmpfs",
-        "/home",
+        "/usr",
+        "/usr",
     ];
     for args in [&terminal, &agent] {
         assert!(
@@ -255,11 +241,7 @@ fn the_terminal_and_the_agent_sandbox_begin_with_the_same_confinement() {
 #[test]
 fn every_scratch_directory_gets_its_own_size_cap() {
     let profile = Profile::bare().with_tmpfs_size(bulkhead::Bytes::mib(8));
-    let args = agent_bwrap_args(
-        &run(AgentNet::None, Vec::new()),
-        &["/tmp", "/run"],
-        &profile,
-    );
+    let args = agent_bwrap_args(&run(AgentNet::None, Vec::new()), &profile);
     for dir in ["/tmp", "/run"] {
         assert!(has(&args, &["--size", "8388608", "--tmpfs", dir]), "{dir}");
     }
@@ -288,7 +270,7 @@ fn a_protected_path_is_bound_read_only_after_the_workspace() {
         .and_then(|r| r.with_protect(inside("missing")))
         .and_then(|r| r.with_protect(inside("link")))
         .expect("inside the workspace");
-    let args = agent_bwrap_args(&with, &[], &Profile::bare());
+    let args = agent_bwrap_args(&with, &Profile::bare());
     let at = |seq: &[&str]| {
         args.windows(seq.len())
             .position(|w| w.iter().map(String::as_str).eq(seq.iter().copied()))
@@ -323,6 +305,38 @@ fn the_seccomp_profile_hands_bubblewrap_descriptor_three() {
         &Profile::bare().with_seccomp(),
     );
     assert!(has(&on, &["--seccomp", "3"]));
-    let off = agent_bwrap_args(&run(AgentNet::None, Vec::new()), &[], &Profile::bare());
+    let off = agent_bwrap_args(&run(AgentNet::None, Vec::new()), &Profile::bare());
     assert!(!off.iter().any(|a| a == "--seccomp"));
+}
+
+/// Why: the root is an allow-list. Secrets under `/etc` are covered only where the host has them
+/// (a bind over a missing path would fail), `/opt` is opt-in, and extra paths come last.
+#[test]
+fn the_root_is_an_allow_list_with_covered_secrets_and_an_escape_hatch() {
+    let profile = Profile::bare()
+        .covering_secrets_where(|p| p == "/etc/shadow" || p == "/etc/ssh")
+        .with_opt(bulkhead::OptDir::ReadOnly)
+        .with_extra_ro(abs("/nix"));
+    let args = agent_bwrap_args(&run(AgentNet::None, Vec::new()), &profile);
+    for seq in [
+        &["--ro-bind", "/usr", "/usr"][..],
+        &["--ro-bind-try", "/etc", "/etc"],
+        &["--ro-bind-try", "/lib64", "/lib64"],
+        &["--ro-bind", "/dev/null", "/etc/shadow"],
+        &["--tmpfs", "/etc/ssh"],
+        &["--ro-bind-try", "/opt", "/opt"],
+        &["--ro-bind", "/nix", "/nix"],
+        &["--tmpfs", "/tmp"],
+        &["--tmpfs", "/run"],
+    ] {
+        assert!(has(&args, seq), "{seq:?}");
+    }
+    assert!(!has(&args, &["--ro-bind", "/dev/null", "/etc/sudoers"]));
+    for gone in [
+        "/home", "/root", "/mnt", "/media", "/srv", "/boot", "/sys", "/var/lib",
+    ] {
+        assert!(!args.iter().any(|a| a == gone), "{gone}");
+    }
+    let bare = agent_bwrap_args(&run(AgentNet::None, Vec::new()), &Profile::bare());
+    assert!(!has(&bare, &["--ro-bind-try", "/opt", "/opt"]));
 }

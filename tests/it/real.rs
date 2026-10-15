@@ -134,11 +134,17 @@ fn the_environment_carries_no_secrets_and_a_fixed_home() {
     let Some(sandbox) = sandbox() else { return };
     let (_root, cwd) = scratch();
     let mut shell = Shell::new(sandbox);
-    let (out, exit) = run(&mut shell, &cwd, "env; ls /home /root 2>&1");
+    let (out, exit) = run(&mut shell, &cwd, "env; ls /home /root /var/log 2>&1; true");
     assert_eq!(exit, ExitReport::Code(0), "{out}");
     assert!(!out.contains("hunter2-secret"), "{out}");
     assert!(!out.contains("scratch-secret"), "{out}");
     assert!(out.contains("HOME=/tmp"), "{out}");
+    // The root is an allow-list: these directories are not there to list.
+    assert!(
+        out.contains("cannot access '/home'") || out.contains("No such file"),
+        "{out}"
+    );
+    assert!(!out.contains("/var/log:"), "{out}");
     let allowed = [
         "PATH", "HOME", "TMPDIR", "LANG", "TERM", "PWD", "SHLVL", "_", "OLDPWD",
     ];

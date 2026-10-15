@@ -11,7 +11,7 @@
 //! not resolve. FINDINGS.md "Sandboxed shell" lists what that does not
 //! stop.
 
-use crate::agent::{AgentRun, agent_bwrap_args, present_hidden};
+use crate::agent::{AgentRun, agent_bwrap_args};
 use crate::bwrap_job::BwrapJob;
 use crate::confinement::{Share, confinement};
 use crate::harden::{Hardening, Seccomp};
@@ -23,23 +23,18 @@ use crate::{AbsPath, CannotSandbox, RootState, SandboxState};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// Directories that are emptied inside the sandbox when they exist on the host.
-pub const HIDDEN: &[&str] = &[
-    "/tmp", "/var/tmp", "/run", "/home", "/root", "/mnt", "/media", "/srv",
-];
-
-/// The `bwrap` arguments for `spec`, hiding the `hidden` directories. Pure.
+/// The `bwrap` arguments for `spec`. Pure.
 ///
 /// The shared confinement comes first (`confinement`). The environment then travels as
 /// `--setenv` words, readable in `/proc/*/cmdline`: safe only because `sandbox_env` is a fixed
 /// allowlist with no secret. The agent sandbox passes its environment on the process instead.
-pub fn bwrap_args(spec: &RunSpec, hidden: &[&str], profile: &Profile) -> Vec<String> {
+pub fn bwrap_args(spec: &RunSpec, profile: &Profile) -> Vec<String> {
     let cwd = spec.cwd.as_str();
     let share = match spec.network {
         Network::Host => Share::HostNet,
         Network::Off => Share::Nothing,
     };
-    let mut args = confinement(share, hidden, profile);
+    let mut args = confinement(share, profile);
     // The working directory goes in after the emptied directories, so it shows through them.
     args.extend(["--bind", cwd, cwd, "--chdir", cwd, "--clearenv"].map(str::to_owned));
     for var in &spec.env {
@@ -57,6 +52,7 @@ pub struct BwrapSandbox {
     launcher: Launcher,
     /// The seccomp filter bubblewrap is given, when it is on.
     filter: Option<Vec<u8>>,
+    hardening: Hardening,
 }
 
 impl BwrapSandbox {
@@ -72,10 +68,14 @@ impl BwrapSandbox {
 
     /// The profile this sandbox adds to every command line: scratch directory sizes.
     pub fn profile(&self) -> Profile {
-        let sized = match self.launcher.limits() {
+        let mut sized = match self.launcher.limits() {
             Some(limits) => Profile::bare().with_tmpfs_size(limits.tmpfs),
             None => Profile::bare(),
         };
+        sized = sized.with_opt(self.hardening.opt).covering_host_secrets();
+        for path in &self.hardening.extra_ro {
+            sized = sized.with_extra_ro(path.clone());
+        }
         match self.filter {
             Some(_) => sized.with_seccomp(),
             None => sized,
@@ -118,7 +118,7 @@ impl BwrapSandbox {
             (Some(_), Some(file)) => Feed::FromFile(file.clone()),
             (Some(_), None) => return Err(StartFault::FilterFile),
         };
-        let args = agent_bwrap_args(run, &present_hidden(), &self.profile());
+        let args = agent_bwrap_args(run, &self.profile());
         Ok(self
             .launcher
             .command(&self.program, &args, &feed, Env::Exactly(&run.env)))
@@ -169,6 +169,7 @@ impl BwrapSandbox {
             program,
             launcher,
             filter,
+            hardening: hardening.clone(),
         })
     }
 }
@@ -233,12 +234,7 @@ impl Sandbox for BwrapSandbox {
         if let SandboxState::Cannot(why) = self.check(&spec.cwd) {
             return Err(StartFault::Cannot(why));
         }
-        let present: Vec<&str> = HIDDEN
-            .iter()
-            .copied()
-            .filter(|d| Path::new(d).is_dir())
-            .collect();
-        let args = bwrap_args(spec, &present, &self.profile());
+        let args = bwrap_args(spec, &self.profile());
         let (feed, stdin) = match &self.filter {
             None => (Feed::NoFilter, Stdio::null()),
             Some(bytes) => (Feed::FromStdin, filter_pipe(bytes)?),

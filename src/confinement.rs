@@ -1,6 +1,6 @@
 //! The part of the bubblewrap command line every sandbox here starts with: namespaces, no
-//! capabilities, the host read-only, a fresh `/dev` and `/proc`, the emptied directories, and the
-//! resolver files when the network is the host's. The terminal sandbox (`bwrap`) and the agent
+//! capabilities, the allow-list root (`root`), a fresh `/dev` and `/proc`, the scratch
+//! directories, and the resolver files when the network is the host's. The terminal sandbox (`bwrap`) and the agent
 //! sandbox (`agent`) both begin with exactly this, so a hardening flag added here reaches both.
 //!
 //! What follows it differs, and so does how the environment travels: the terminal sandbox puts
@@ -26,27 +26,17 @@ fn words(list: &[&str]) -> Vec<String> {
     list.iter().map(|s| (*s).to_owned()).collect()
 }
 
-/// The shared arguments, hiding the `hidden` directories. Pure.
-pub(crate) fn confinement(share: Share, hidden: &[&str], profile: &Profile) -> Vec<String> {
+/// The shared arguments. Pure.
+pub(crate) fn confinement(share: Share, profile: &Profile) -> Vec<String> {
     let mut args = words(&["--die-with-parent", "--new-session", "--unshare-all"]);
     if share == Share::HostNet {
         args.push("--share-net".to_owned());
     }
-    args.extend(words(&[
-        "--cap-drop",
-        "ALL",
-        "--ro-bind",
-        "/",
-        "/",
-        "--dev",
-        "/dev",
-        "--proc",
-        "/proc",
-    ]));
+    args.extend(words(&["--cap-drop", "ALL"]));
     args.extend(profile.seccomp());
-    for dir in hidden {
-        args.extend(profile.tmpfs(dir));
-    }
+    args.extend(profile.root());
+    args.extend(words(&["--dev", "/dev", "--proc", "/proc"]));
+    args.extend(profile.scratch());
     if share == Share::HostNet {
         args.extend(resolver_binds());
     }
@@ -57,13 +47,13 @@ pub(crate) fn confinement(share: Share, hidden: &[&str], profile: &Profile) -> V
 mod tests {
     use super::*;
 
-    /// Both shares share the prefix (capabilities dropped, hidden directories emptied); only
+    /// Both shares share the prefix (capabilities dropped, the allow-list root); only
     /// the host network adds `--share-net`. Each step names its share in the failure message.
     #[test]
     fn the_prefix_is_shared_and_only_the_host_network_shares_the_net_namespace() {
         let cases = [(Share::Nothing, false), (Share::HostNet, true)];
         for (share, shares_net) in cases {
-            let args = confinement(share, &["/home", "/tmp"], &Profile::bare());
+            let args = confinement(share, &Profile::bare());
             assert_eq!(
                 &args[..3],
                 ["--die-with-parent", "--new-session", "--unshare-all"],
@@ -74,8 +64,12 @@ mod tests {
                 "{share:?}: cap-drop"
             );
             assert!(
-                args.windows(2).any(|w| w == ["--tmpfs", "/home"]),
-                "{share:?}: /home emptied"
+                args.windows(3).any(|w| w == ["--ro-bind", "/usr", "/usr"]),
+                "{share:?}: /usr bound"
+            );
+            assert!(
+                !args.iter().any(|a| a == "/home" || a == "/"),
+                "{share:?}: no /home and no whole root"
             );
             assert_eq!(
                 args.contains(&"--share-net".to_owned()),

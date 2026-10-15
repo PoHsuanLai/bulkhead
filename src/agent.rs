@@ -3,14 +3,14 @@
 //! command, an agent talks over its stdio, so this file only builds the arguments; the process
 //! and its pipes are the caller's.
 //!
-//! What the agent gets: the host read-only; `/home`, `/root`, `/run`, `/tmp` and the like empty;
+//! What the agent gets: an allow-list root (`root`): `/usr`, `/etc` minus its secrets, the
+//! `/bin` and `/lib*` links, fresh `/tmp` and `/run`, and nothing of `/home`, `/var`, `/mnt`;
 //! the session's working directory writable; each extra bind the caller names for this
 //! program (its own program directory read-only, its own login and state directory read-write);
 //! the network per `NetworkMode`; an environment that is exactly what the caller passes (set on
 //! the bubblewrap process, never in its arguments, so a key is not on a command line);
 //! no capabilities; a new session; death with its parent.
 
-use crate::bwrap::HIDDEN;
 use crate::confinement::{Share, confinement};
 use crate::net::{AgentNet, EndpointBind};
 use crate::profile::Profile;
@@ -147,13 +147,13 @@ impl AgentRun {
     }
 }
 
-/// The `bwrap` arguments for `run`, hiding the `hidden` directories. Pure.
-pub fn agent_bwrap_args(run: &AgentRun, hidden: &[&str], profile: &Profile) -> Vec<String> {
+/// The `bwrap` arguments for `run`. Pure.
+pub fn agent_bwrap_args(run: &AgentRun, profile: &Profile) -> Vec<String> {
     let share = match run.net {
         AgentNet::Host => Share::HostNet,
         AgentNet::None | AgentNet::Endpoint(_) => Share::Nothing,
     };
-    let mut args = confinement(share, hidden, profile);
+    let mut args = confinement(share, profile);
     for bind in &run.binds {
         let flag = match bind.access {
             Access::ReadOnly => "--ro-bind",
@@ -212,15 +212,4 @@ fn forwarder_words(bind: &EndpointBind, agent: &[String]) -> Vec<String> {
     ];
     out.extend(agent.iter().cloned());
     out
-}
-
-/// The directories to empty: those of `HIDDEN` that exist on this host.
-pub fn present_hidden() -> Vec<&'static str> {
-    present_hidden_where(|d| std::path::Path::new(d).is_dir())
-}
-
-/// The directories of `HIDDEN` for which `exists` is true. The host's view is supplied by the
-/// caller, so a test or another host can answer it.
-pub fn present_hidden_where(exists: impl Fn(&str) -> bool) -> Vec<&'static str> {
-    HIDDEN.iter().copied().filter(|d| exists(d)).collect()
 }
