@@ -3,18 +3,33 @@
 //! the working directory and never the real home.
 
 use bulkhead::AbsPath;
-use bulkhead::{Argv, BwrapSandbox, ExitReport, Launch, Shell};
+use bulkhead::{
+    Argv, BwrapSandbox, ExitReport, Hardening, Launch, LimitPolicy, Limits, Shell, UserSession,
+};
 use std::path::Path;
 
 fn sandbox() -> Option<BwrapSandbox> {
+    sandbox_with(&Hardening::default())
+}
+
+/// A sandbox for `hardening`, or `None` (printing why) where this host cannot make one. Where
+/// there is no systemd user manager the default (cgroup) limits are refused, and the test falls
+/// back to rlimits so the rest of the sandbox is still exercised.
+fn sandbox_with(hardening: &Hardening) -> Option<BwrapSandbox> {
     let path = std::env::var("PATH").unwrap_or_default();
-    match BwrapSandbox::detect(&path) {
-        Ok(s) => Some(s),
-        Err(why) => {
-            eprintln!("SKIP real sandbox test: {why}");
-            None
+    let session = UserSession::from_env();
+    let rlimit = Hardening {
+        limits: LimitPolicy::Rlimit(Limits::default()),
+        ..hardening.clone()
+    };
+    for h in [hardening, &rlimit] {
+        match BwrapSandbox::detect_with(&path, h, &session) {
+            Ok(s) => return Some(s),
+            Err(why) => eprintln!("real sandbox: {why}"),
         }
     }
+    eprintln!("SKIP real sandbox test");
+    None
 }
 
 fn launch(cwd: &Path, line: &[&str]) -> Launch {
@@ -219,4 +234,23 @@ fn a_cwd_that_is_not_a_directory_or_is_too_shallow_cannot_be_sandboxed() {
             "{bad}"
         );
     }
+}
+
+/// The CPU-time limit is a kernel limit on the command itself, whichever way the rest is enforced.
+#[test]
+fn the_cpu_time_limit_reaches_the_command() {
+    let hardening = Hardening {
+        limits: LimitPolicy::Rlimit(Limits {
+            cpu_seconds: 7,
+            ..Limits::default()
+        }),
+    };
+    let Some(sandbox) = sandbox_with(&hardening) else {
+        return;
+    };
+    let (_root, cwd) = scratch();
+    let mut shell = Shell::new(sandbox);
+    let (out, exit) = run(&mut shell, &cwd, "ulimit -t");
+    assert_eq!(exit, ExitReport::Code(0), "{out}");
+    assert_eq!(out.trim(), "7");
 }

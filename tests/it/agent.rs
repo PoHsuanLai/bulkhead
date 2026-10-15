@@ -3,7 +3,8 @@
 use bulkhead::AbsPath;
 use bulkhead::{
     Access, AgentNet, AgentRun, Argv, Bind, ByteLimit, EndpointBind, EnvVar, INSIDE_FORWARDER,
-    INSIDE_SOCKET, Network, NetworkMode, RESOLVER_FILES, RunSpec, agent_bwrap_args, bwrap_args,
+    INSIDE_SOCKET, Network, NetworkMode, Profile, RESOLVER_FILES, RunSpec, agent_bwrap_args,
+    bwrap_args,
 };
 
 fn abs(text: &str) -> AbsPath {
@@ -29,7 +30,11 @@ fn has(args: &[String], seq: &[&str]) -> bool {
 
 #[test]
 fn with_no_network_the_namespace_is_new_and_nothing_is_shared() {
-    let args = agent_bwrap_args(&run(AgentNet::None, Vec::new()), &["/home", "/tmp"]);
+    let args = agent_bwrap_args(
+        &run(AgentNet::None, Vec::new()),
+        &["/home", "/tmp"],
+        &Profile::bare(),
+    );
     assert!(has(&args, &["--unshare-all"]));
     assert!(!args.iter().any(|a| a == "--share-net"));
     assert!(has(&args, &["--cap-drop", "ALL"]));
@@ -46,7 +51,11 @@ fn with_no_network_the_namespace_is_new_and_nothing_is_shared() {
 fn host_mode_shares_the_network_and_binds_back_only_the_resolver_files() {
     // /etc/resolv.conf is often a link into /run, which the sandbox empties: without these the
     // agent has the network but cannot resolve a name.
-    let host = agent_bwrap_args(&run(AgentNet::Host, Vec::new()), &["/run"]);
+    let host = agent_bwrap_args(
+        &run(AgentNet::Host, Vec::new()),
+        &["/run"],
+        &Profile::bare(),
+    );
     assert!(has(&host, &["--share-net"]), "step host shares the network");
     for file in RESOLVER_FILES {
         assert!(
@@ -60,7 +69,11 @@ fn host_mode_shares_the_network_and_binds_back_only_the_resolver_files() {
         tmpfs < bind,
         "step host binds: the binds come after /run is emptied"
     );
-    let none = agent_bwrap_args(&run(AgentNet::None, Vec::new()), &["/run"]);
+    let none = agent_bwrap_args(
+        &run(AgentNet::None, Vec::new()),
+        &["/run"],
+        &Profile::bare(),
+    );
     assert!(
         !none.iter().any(|a| a == "--share-net"),
         "step none: no shared network"
@@ -78,7 +91,11 @@ fn endpoint_only_starts_the_forwarder_first_and_binds_one_socket() {
         abs("/run/user/1000/bulkhead/ep.sock"),
         40123,
     );
-    let args = agent_bwrap_args(&run(AgentNet::Endpoint(bind), Vec::new()), &[]);
+    let args = agent_bwrap_args(
+        &run(AgentNet::Endpoint(bind), Vec::new()),
+        &[],
+        &Profile::bare(),
+    );
     assert!(!args.iter().any(|a| a == "--share-net"));
     assert!(has(
         &args,
@@ -120,7 +137,7 @@ fn extra_binds_come_after_the_emptied_directories_and_keep_their_access() {
         Bind::new(abs("/home/u/.local/node"), Access::ReadOnly),
         Bind::new(abs("/home/u/.claude"), Access::ReadWrite),
     ];
-    let args = agent_bwrap_args(&run(AgentNet::None, binds), &["/home"]);
+    let args = agent_bwrap_args(&run(AgentNet::None, binds), &["/home"], &Profile::bare());
     let at = |seq: &[&str]| {
         args.windows(seq.len())
             .position(|w| w.iter().map(String::as_str).eq(seq.iter().copied()))
@@ -158,11 +175,11 @@ fn a_command_with_the_host_network_resolves_names_too() {
             ByteLimit(1024),
         )
     };
-    let host = bwrap_args(&spec(Network::Host), &["/run"]);
+    let host = bwrap_args(&spec(Network::Host), &["/run"], &Profile::bare());
     for file in RESOLVER_FILES {
         assert!(has(&host, &["--ro-bind-try", file, file]), "{file}");
     }
-    let none = bwrap_args(&spec(Network::Off), &["/run"]);
+    let none = bwrap_args(&spec(Network::Off), &["/run"], &Profile::bare());
     assert!(!none.iter().any(|a| a == "--ro-bind-try"));
 }
 
@@ -173,7 +190,7 @@ fn an_overlay_is_a_read_only_mount_of_another_file_after_the_binds() {
         abs("/run/d/settings.json"),
         abs("/home/u/.gemini/antigravity-acp/settings.json"),
     ));
-    let args = agent_bwrap_args(&with, &["/home"]);
+    let args = agent_bwrap_args(&with, &["/home"], &Profile::bare());
     let at = |seq: &[&str]| {
         args.windows(seq.len())
             .position(|w| w.iter().map(String::as_str).eq(seq.iter().copied()))
@@ -199,8 +216,12 @@ fn the_terminal_and_the_agent_sandbox_begin_with_the_same_confinement() {
         Network::Off,
         ByteLimit(1024),
     );
-    let terminal = bwrap_args(&spec, &["/run", "/home"]);
-    let agent = agent_bwrap_args(&run(AgentNet::None, Vec::new()), &["/run", "/home"]);
+    let terminal = bwrap_args(&spec, &["/run", "/home"], &Profile::bare());
+    let agent = agent_bwrap_args(
+        &run(AgentNet::None, Vec::new()),
+        &["/run", "/home"],
+        &Profile::bare(),
+    );
     let prefix = [
         "--die-with-parent",
         "--new-session",
@@ -226,5 +247,20 @@ fn the_terminal_and_the_agent_sandbox_begin_with_the_same_confinement() {
                 .take(prefix.len())
                 .eq(prefix)
         );
+    }
+}
+
+/// Why: a scratch directory defaults to half of RAM, so each one needs its own size cap, and the
+/// cap must come right before the `--tmpfs` it applies to.
+#[test]
+fn every_scratch_directory_gets_its_own_size_cap() {
+    let profile = Profile::bare().with_tmpfs_size(bulkhead::Bytes::mib(8));
+    let args = agent_bwrap_args(
+        &run(AgentNet::None, Vec::new()),
+        &["/tmp", "/run"],
+        &profile,
+    );
+    for dir in ["/tmp", "/run"] {
+        assert!(has(&args, &["--size", "8388608", "--tmpfs", dir]), "{dir}");
     }
 }

@@ -14,6 +14,12 @@ namespaces. bubblewrap runs as a separate process and is never linked.
 - no network, unless you ask for the host's (or, for an agent, one forwarded endpoint)
 - a cleared environment rebuilt from an allowlist, with a fixed `PATH` and `HOME`
 - its own session, no capabilities, and death with its parent
+- resource limits (`Hardening::limits`): by default memory, process count and CPU seconds in a
+  transient systemd user scope, and a size cap on every scratch directory. If the limits cannot
+  be applied the sandbox is not created (`CannotSandbox::LimitsUnavailable`); running without
+  them needs an explicit `LimitPolicy::Unlimited(AcceptNoLimits)`. `LimitPolicy::Rlimit` is the
+  weaker choice for hosts with no user manager: CPU seconds and address space per process, and
+  no cap on the number of processes
 
 A command never runs unsandboxed: when the sandbox cannot confine one (no `bwrap`, namespaces
 refused, a bad working directory), `Shell` refuses and says why.

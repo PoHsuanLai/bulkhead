@@ -11,6 +11,7 @@
 //! it (`sandbox_env`), which is why `--setenv` is safe there and not for the agent.
 
 use crate::net::resolver_binds;
+use crate::profile::Profile;
 
 /// Whether the sandbox shares the host's network namespace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,7 +27,7 @@ fn words(list: &[&str]) -> Vec<String> {
 }
 
 /// The shared arguments, hiding the `hidden` directories. Pure.
-pub(crate) fn confinement(share: Share, hidden: &[&str]) -> Vec<String> {
+pub(crate) fn confinement(share: Share, hidden: &[&str], profile: &Profile) -> Vec<String> {
     let mut args = words(&["--die-with-parent", "--new-session", "--unshare-all"]);
     if share == Share::HostNet {
         args.push("--share-net".to_owned());
@@ -43,7 +44,7 @@ pub(crate) fn confinement(share: Share, hidden: &[&str]) -> Vec<String> {
         "/proc",
     ]));
     for dir in hidden {
-        args.extend(["--tmpfs".to_owned(), (*dir).to_owned()]);
+        args.extend(profile.tmpfs(dir));
     }
     if share == Share::HostNet {
         args.extend(resolver_binds());
@@ -61,7 +62,7 @@ mod tests {
     fn the_prefix_is_shared_and_only_the_host_network_shares_the_net_namespace() {
         let cases = [(Share::Nothing, false), (Share::HostNet, true)];
         for (share, shares_net) in cases {
-            let args = confinement(share, &["/home", "/tmp"]);
+            let args = confinement(share, &["/home", "/tmp"], &Profile::bare());
             assert_eq!(
                 &args[..3],
                 ["--die-with-parent", "--new-session", "--unshare-all"],

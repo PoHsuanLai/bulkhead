@@ -13,7 +13,10 @@
 
 use crate::bwrap_job::BwrapJob;
 use crate::confinement::{Share, confinement};
-use crate::sandbox::{Network, RunSpec, Sandbox, StartFault};
+use crate::harden::Hardening;
+use crate::launch::{Enforcement, Env, Feed, Launcher, UserSession};
+use crate::profile::Profile;
+use crate::sandbox::{EnvVar, Network, RunSpec, Sandbox, StartFault};
 use crate::{AbsPath, CannotSandbox, RootState, SandboxState};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -28,13 +31,13 @@ pub const HIDDEN: &[&str] = &[
 /// The shared confinement comes first (`confinement`). The environment then travels as
 /// `--setenv` words, readable in `/proc/*/cmdline`: safe only because `sandbox_env` is a fixed
 /// allowlist with no secret. The agent sandbox passes its environment on the process instead.
-pub fn bwrap_args(spec: &RunSpec, hidden: &[&str]) -> Vec<String> {
+pub fn bwrap_args(spec: &RunSpec, hidden: &[&str], profile: &Profile) -> Vec<String> {
     let cwd = spec.cwd.as_str();
     let share = match spec.network {
         Network::Host => Share::HostNet,
         Network::Off => Share::Nothing,
     };
-    let mut args = confinement(share, hidden);
+    let mut args = confinement(share, hidden, profile);
     // The working directory goes in after the emptied directories, so it shows through them.
     args.extend(["--bind", cwd, cwd, "--chdir", cwd, "--clearenv"].map(str::to_owned));
     for var in &spec.env {
@@ -49,6 +52,7 @@ pub fn bwrap_args(spec: &RunSpec, hidden: &[&str]) -> Vec<String> {
 #[derive(Debug, Clone)]
 pub struct BwrapSandbox {
     program: PathBuf,
+    launcher: Launcher,
 }
 
 impl BwrapSandbox {
@@ -57,9 +61,40 @@ impl BwrapSandbox {
         &self.program
     }
 
-    /// Finds `bwrap` in the `:`-separated `path` and checks that the kernel lets it make the
-    /// namespaces (one throwaway run). Reads no environment: the caller passes the search path.
+    /// How the resource limits are enforced for this sandbox.
+    pub fn enforcement(&self) -> Enforcement {
+        self.launcher.enforcement()
+    }
+
+    /// The profile this sandbox adds to every command line: scratch directory sizes.
+    pub fn profile(&self) -> Profile {
+        match self.launcher.limits() {
+            Some(limits) => Profile::bare().with_tmpfs_size(limits.tmpfs),
+            None => Profile::bare(),
+        }
+    }
+
+    /// The command that starts bubblewrap on `args`, limited as configured, with exactly the
+    /// environment `env` (the caller reads its stdio). For an agent process: see
+    /// `agent_bwrap_args`.
+    pub fn agent_command(&self, args: &[String], env: &[EnvVar]) -> Command {
+        self.launcher
+            .command(&self.program, args, &Feed::NoFilter, Env::Exactly(env))
+    }
+
+    /// `detect_with` for the default hardening: cgroup limits, the session of this process.
     pub fn detect(path: &str) -> Result<Self, CannotSandbox> {
+        Self::detect_with(path, &Hardening::default(), &UserSession::from_env())
+    }
+
+    /// Finds `bwrap` in the `:`-separated `path`, checks that the kernel lets it make the
+    /// namespaces (one throwaway run), and that `hardening` can be applied. Where a limit that
+    /// was asked for cannot be applied this is an error, never a weaker sandbox.
+    pub fn detect_with(
+        path: &str,
+        hardening: &Hardening,
+        session: &UserSession,
+    ) -> Result<Self, CannotSandbox> {
         if cfg!(not(unix)) {
             return Err(CannotSandbox::Unsupported);
         }
@@ -69,27 +104,32 @@ impl BwrapSandbox {
             .map(|d| Path::new(d).join("bwrap"))
             .find(|p| p.is_file())
             .ok_or(CannotSandbox::NotInstalled)?;
-        let probe = Command::new(&program)
-            .args([
-                "--ro-bind",
-                "/",
-                "/",
-                "--unshare-all",
-                "--die-with-parent",
-                "--",
-            ])
-            .arg("true")
-            .env_clear()
-            .env("PATH", "/usr/bin:/bin")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        match probe {
-            Ok(status) if status.success() => Ok(Self { program }),
-            _ => Err(CannotSandbox::NamespacesDenied),
+        if !bwrap_runs(&program, &[]) {
+            return Err(CannotSandbox::NamespacesDenied);
         }
+        let launcher = Launcher::resolve(path, &hardening.limits, session)?;
+        if launcher.limits().is_some()
+            && !bwrap_runs(&program, &["--size", "1048576", "--tmpfs", "/tmp"])
+        {
+            return Err(CannotSandbox::LimitsUnavailable);
+        }
+        Ok(Self { program, launcher })
     }
+}
+
+/// One throwaway run of `program` with `extra` arguments; whether it succeeded.
+fn bwrap_runs(program: &Path, extra: &[&str]) -> bool {
+    Command::new(program)
+        .args(["--ro-bind", "/", "/", "--unshare-all", "--die-with-parent"])
+        .args(extra)
+        .args(["--", "true"])
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 /// A working directory is usable when it is a real directory at least two levels down (never `/`,
@@ -123,12 +163,11 @@ impl Sandbox for BwrapSandbox {
             .copied()
             .filter(|d| Path::new(d).is_dir())
             .collect();
-        let mut command = Command::new(&self.program);
-        command
-            .args(bwrap_args(spec, &present))
-            .env_clear()
-            .env("PATH", "/usr/bin:/bin");
-        BwrapJob::spawn(command, spec.keep)
+        let args = bwrap_args(spec, &present, &self.profile());
+        let command = self
+            .launcher
+            .command(&self.program, &args, &Feed::NoFilter, Env::Minimal);
+        BwrapJob::spawn(command, spec.keep, Stdio::null())
     }
 }
 
@@ -159,7 +198,12 @@ impl Detected {
     /// # }
     /// ```
     pub fn probe(path: &str) -> Self {
-        match BwrapSandbox::detect(path) {
+        Self::probe_with(path, &Hardening::default(), &UserSession::from_env())
+    }
+
+    /// `probe` for chosen hardening and user session.
+    pub fn probe_with(path: &str, hardening: &Hardening, session: &UserSession) -> Self {
+        match BwrapSandbox::detect_with(path, hardening, session) {
             Ok(found) => Detected::Bwrap(found),
             Err(why) => Detected::Missing(why),
         }

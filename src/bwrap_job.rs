@@ -60,11 +60,15 @@ fn own_group(command: &mut Command) {
 fn own_group(_: &mut Command) {}
 
 impl BwrapJob {
-    /// Starts `command` with stdout and stderr on one pipe and no stdin.
-    pub(crate) fn spawn(mut command: Command, keep: ByteLimit) -> Result<Self, StartFault> {
+    /// Starts `command` with stdout and stderr on one pipe and `stdin` as given.
+    pub(crate) fn spawn(
+        mut command: Command,
+        keep: ByteLimit,
+        stdin: Stdio,
+    ) -> Result<Self, StartFault> {
         let (mut reader, writer) = std::io::pipe().map_err(|_| StartFault::Spawn)?;
         let errors = writer.try_clone().map_err(|_| StartFault::Spawn)?;
-        command.stdin(Stdio::null()).stdout(writer).stderr(errors);
+        command.stdin(stdin).stdout(writer).stderr(errors);
         own_group(&mut command);
         let child = command.spawn().map_err(|_| StartFault::Spawn)?;
         // The command still holds the write ends; closing them lets the reader see the end.

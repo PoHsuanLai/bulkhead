@@ -19,6 +19,13 @@ pub enum CannotSandbox {
     /// The working directory cannot be the one writable place (`/`, or it is not a directory).
     #[error("the working directory cannot be sandboxed")]
     BadWorkingDir,
+    /// Resource limits were asked for and cannot be applied here (no systemd user manager that
+    /// delegates the cgroup controllers, no `sh`, or bubblewrap without `--size`).
+    #[error("resource limits cannot be applied here")]
+    LimitsUnavailable,
+    /// The limits are not usable numbers (zero, or memory not a whole number of pages).
+    #[error("the resource limits are not usable")]
+    BadLimits,
 }
 
 /// Whether this command can run in the sandbox.

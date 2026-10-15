@@ -14,6 +14,7 @@ use crate::AbsPath;
 use crate::bwrap::HIDDEN;
 use crate::confinement::{Share, confinement};
 use crate::net::{AgentNet, EndpointBind};
+use crate::profile::Profile;
 use crate::sandbox::{Argv, EnvVar};
 
 /// Where the forwarder and its socket appear inside the sandbox.
@@ -117,12 +118,12 @@ impl AgentRun {
 }
 
 /// The `bwrap` arguments for `run`, hiding the `hidden` directories. Pure.
-pub fn agent_bwrap_args(run: &AgentRun, hidden: &[&str]) -> Vec<String> {
+pub fn agent_bwrap_args(run: &AgentRun, hidden: &[&str], profile: &Profile) -> Vec<String> {
     let share = match run.net {
         AgentNet::Host => Share::HostNet,
         AgentNet::None | AgentNet::Endpoint(_) => Share::Nothing,
     };
-    let mut args = confinement(share, hidden);
+    let mut args = confinement(share, hidden, profile);
     for bind in &run.binds {
         let flag = match bind.access {
             Access::ReadOnly => "--ro-bind",

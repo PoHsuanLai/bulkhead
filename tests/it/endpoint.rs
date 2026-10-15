@@ -4,7 +4,9 @@
 
 use bulkhead::AbsPath;
 use bulkhead::forward::{Bridge, Loopback};
-use bulkhead::{AgentNet, AgentRun, Argv, EndpointBind, EnvVar, agent_bwrap_args, present_hidden};
+use bulkhead::{
+    AgentNet, AgentRun, Argv, EndpointBind, EnvVar, Profile, agent_bwrap_args, present_hidden,
+};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::Path;
@@ -29,7 +31,7 @@ fn run_in_sandbox(program: &Path, net: AgentNet, cwd: &Path, script: &str) -> Op
     let argv = Argv::new("bash", &["-c".to_owned(), script.to_owned()]).expect("argv");
     let run = AgentRun::new(argv, abs(cwd), env, net);
     let out = Command::new(program)
-        .args(agent_bwrap_args(&run, &present_hidden()))
+        .args(agent_bwrap_args(&run, &present_hidden(), &Profile::bare()))
         .env_clear()
         .envs(run.env.iter().map(|v| (&v.name, &v.value)))
         .stdin(Stdio::null())

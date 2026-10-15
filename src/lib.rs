@@ -23,9 +23,12 @@ mod env;
 pub mod fake;
 #[cfg(unix)]
 pub mod forward;
+mod harden;
+mod launch;
 mod net;
 mod output;
 mod path;
+mod profile;
 mod redact;
 mod sandbox;
 mod state;
@@ -38,9 +41,12 @@ pub use agent::{
 pub use bwrap::{BwrapSandbox, Detected, HIDDEN, bwrap_args};
 pub use bwrap_job::BwrapJob;
 pub use env::{SANDBOX_HOME, SANDBOX_PATH, dropped, sandbox_env};
+pub use harden::{AcceptNoLimits, Bytes, Hardening, LimitPolicy, Limits};
+pub use launch::{Enforcement, UserSession};
 pub use net::{AgentNet, EndpointBind, NetFault, NetworkMode, RESOLVER_FILES};
 pub use output::{Shown, Tail, shown};
 pub use path::{AbsPath, PathFault, RootState};
+pub use profile::Profile;
 pub use redact::{MASK, redact};
 pub use sandbox::{
     Argv, ByteLimit, Captured, Cut, EnvVar, ExitReport, Job, KILLED, Network, RunSpec, Sandbox,
