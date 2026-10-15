@@ -23,11 +23,26 @@ const BASE_PATH: &str = "/usr/bin:/bin";
 
 /// Run by `sh -c`: `$1` says where bubblewrap's seccomp filter comes from (`none`, `stdin`, or a
 /// file path, which becomes fd 3), `$2` and `$3` are the CPU seconds and the address space in KiB
-/// (`-` for none), the rest is the bubblewrap command. A limit that cannot be set stops here
-/// with 125, before anything runs.
-const SCRIPT: &str = r#"m=$1; cpu=$2; vm=$3; shift 3
+/// (`-` for none), `$4` the names of the only variables bubblewrap may inherit (`-` for all of
+/// them), the rest is the bubblewrap command. A limit that cannot be set stops here with 125,
+/// before anything runs.
+///
+/// The keep list matters where bubblewrap passes its own environment on (the agent sandbox):
+/// `systemd-run` adds the session variables it needs and `INVOCATION_ID`, so every exported
+/// name not on the list is unset before bubblewrap starts. Only names travel as arguments; the
+/// values stay in the environment.
+const SCRIPT: &str = r#"m=$1; cpu=$2; vm=$3; keep=$4; shift 4
 [ "$cpu" = - ] || ulimit -t "$cpu" || exit 125
 [ "$vm" = - ] || ulimit -v "$vm" || exit 125
+if [ "$keep" != - ]; then
+  set -f; all=$(export -p); old=$IFS; IFS='
+'
+  for l in $all; do
+    case $l in "export "*) n=${l#export }; n=${n%%=*}
+      case " $keep " in *" $n "*) ;; *) unset "$n" 2>/dev/null ;; esac ;; esac
+  done
+  IFS=$old; set +f
+fi
 case $m in
 stdin) exec "$@" 3<&0 </dev/null ;;
 none) exec "$@" ;;
@@ -97,8 +112,23 @@ impl Feed {
 pub(crate) enum Env<'a> {
     /// A fixed `PATH` only.
     Minimal,
-    /// Exactly these variables (plus the session variables a scope needs).
+    /// Exactly these variables. A scope's session variables reach `systemd-run`, and the script
+    /// unsets them again before bubblewrap starts.
     Exactly(&'a [EnvVar]),
+}
+
+impl Env<'_> {
+    /// The script's keep list: `-` (bubblewrap clears its child's environment itself), or the
+    /// names bubblewrap may inherit.
+    fn keep_word(&self) -> String {
+        match self {
+            Env::Minimal => "-".to_owned(),
+            Env::Exactly(vars) => {
+                let names: Vec<&str> = vars.iter().map(|v| v.name.as_str()).collect();
+                format!(" {} ", names.join(" "))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -246,6 +276,7 @@ impl Launcher {
                 .arg(feed.word())
                 .arg(cpu)
                 .arg(vm)
+                .arg(env.keep_word())
                 .arg(bwrap)
                 .args(args);
             c
@@ -296,6 +327,40 @@ mod tests {
         }
     }
 
+    /// The script hands on only the kept names: what `systemd-run` or the caller's shell added
+    /// is gone, and a value never travels as an argument.
+    #[test]
+    fn the_script_hands_on_only_the_kept_variables() {
+        let out = Command::new(SH)
+            .args([
+                "-c",
+                SCRIPT,
+                "sh",
+                "none",
+                "-",
+                "-",
+                " KEPT ",
+                "/usr/bin/env",
+            ])
+            .env_clear()
+            .env("KEPT", "kept-value")
+            .env("INVOCATION_ID", "0123")
+            .env("XDG_RUNTIME_DIR", "/run/user/1000")
+            .env("TRICKY", "a\nexport KEPT=x")
+            .output()
+            .expect("sh runs");
+        assert!(out.status.success(), "the script runs env");
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut names: Vec<&str> = text
+            .lines()
+            .filter_map(|l| l.split_once('=').map(|(n, _)| n))
+            .filter(|n| !matches!(*n, "PWD" | "SHLVL" | "_" | "OLDPWD"))
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, ["KEPT"]);
+        assert!(text.contains("KEPT=kept-value"));
+    }
+
     /// Each way of limiting builds its command; steps are named in the failure messages.
     #[test]
     fn the_command_follows_the_enforcement() {
@@ -317,8 +382,8 @@ mod tests {
         assert_eq!(c.get_program(), SH, "step rlimit: through sh");
         let w = words(&c);
         assert_eq!(
-            w[2..7],
-            ["sh", "stdin", "900", "2097152", "/usr/bin/bwrap"],
+            w[2..8],
+            ["sh", "stdin", "900", "2097152", "-", "/usr/bin/bwrap"],
             "step rlimit: cpu seconds and address space in KiB"
         );
 
