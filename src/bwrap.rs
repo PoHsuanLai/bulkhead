@@ -14,6 +14,7 @@
 use crate::agent::{AgentRun, agent_bwrap_args};
 use crate::bwrap_job::BwrapJob;
 use crate::confinement::{Share, confinement};
+use crate::fds::{InheritedFds, inherited_fds};
 use crate::harden::{Hardening, Seccomp};
 use crate::launch::{Enforcement, Env, Feed, Launcher, UserSession};
 use crate::profile::Profile;
@@ -53,6 +54,17 @@ pub struct BwrapSandbox {
     /// The seccomp filter bubblewrap is given, when it is on.
     filter: Option<Vec<u8>>,
     hardening: Hardening,
+}
+
+/// Fails closed where a descriptor would leak into the sandbox, unless the person allowed it.
+fn no_leaks(fds: InheritedFds) -> Result<(), StartFault> {
+    match fds {
+        InheritedFds::Allow => Ok(()),
+        InheritedFds::Refuse => match inherited_fds() {
+            Ok(found) if found.is_empty() => Ok(()),
+            _ => Err(StartFault::InheritedFds),
+        },
+    }
 }
 
 impl BwrapSandbox {
@@ -113,6 +125,7 @@ impl BwrapSandbox {
         if let SandboxState::Cannot(why) = self.check(&run.cwd) {
             return Err(StartFault::Cannot(why));
         }
+        no_leaks(self.hardening.fds)?;
         let feed = match (&self.filter, filter) {
             (None, _) => Feed::NoFilter,
             (Some(_), Some(file)) => Feed::FromFile(file.clone()),
@@ -234,6 +247,7 @@ impl Sandbox for BwrapSandbox {
         if let SandboxState::Cannot(why) = self.check(&spec.cwd) {
             return Err(StartFault::Cannot(why));
         }
+        no_leaks(self.hardening.fds)?;
         let args = bwrap_args(spec, &self.profile());
         let (feed, stdin) = match &self.filter {
             None => (Feed::NoFilter, Stdio::null()),

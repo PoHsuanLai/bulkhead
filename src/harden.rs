@@ -6,6 +6,7 @@
 //! default is the strict choice, and a sandbox that cannot apply it refuses to start.
 
 use crate::AbsPath;
+use crate::fds::InheritedFds;
 use serde::{Deserialize, Serialize};
 
 /// A size in bytes.
@@ -136,4 +137,6 @@ pub struct Hardening {
     /// Extra host paths made visible read-only at the same path: the escape hatch for a
     /// toolchain that lives outside `/usr` (`/nix`, a version manager under a home directory).
     pub extra_ro: Vec<AbsPath>,
+    /// What to do about descriptors that would be inherited.
+    pub fds: InheritedFds,
 }

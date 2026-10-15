@@ -21,6 +21,7 @@ pub mod cli;
 mod confinement;
 mod env;
 pub mod fake;
+mod fds;
 #[cfg(unix)]
 pub mod forward;
 mod harden;
@@ -43,6 +44,7 @@ pub use agent::{
 pub use bwrap::{BwrapSandbox, Detected, bwrap_args};
 pub use bwrap_job::BwrapJob;
 pub use env::{SANDBOX_HOME, SANDBOX_PATH, dropped, sandbox_env};
+pub use fds::{InheritedFds, inherited_fds};
 pub use harden::{AcceptNoLimits, Bytes, Hardening, LimitPolicy, Limits, OptDir, Seccomp};
 pub use launch::{Enforcement, UserSession};
 pub use net::{AgentNet, EndpointBind, NetFault, NetworkMode, RESOLVER_FILES};

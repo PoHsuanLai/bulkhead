@@ -52,7 +52,8 @@ pub enum Network {
     /// methods ask for.
     #[default]
     Off,
-    /// The host's network. Nothing in this repo asks for it yet.
+    /// The host's network namespace: every loopback service and abstract unix socket of the host
+    /// is reachable, and nothing is filtered (see `NetworkMode::Host`).
     Host,
 }
 
@@ -141,6 +142,9 @@ pub enum StartFault {
     /// The sandbox cannot confine this command; nothing was run.
     #[error("cannot sandbox: {0}")]
     Cannot(crate::CannotSandbox),
+    /// A descriptor above 2 is not close-on-exec and would leak into the sandbox.
+    #[error("an inheritable file descriptor would leak into the sandbox")]
+    InheritedFds,
     /// The sandbox has a syscall filter and the caller gave no file to hand it over in.
     #[error("the syscall filter file was not given")]
     FilterFile,

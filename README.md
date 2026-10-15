@@ -24,6 +24,13 @@ namespaces. bubblewrap runs as a separate process and is never linked.
   weaker choice for hosts with no user manager: CPU seconds and address space per process, and
   no cap on the number of processes
 
+Requirement for callers: every file descriptor above 2 must be close-on-exec when a sandbox
+starts (Rust's std, tokio and zbus already do this). Without `unsafe` the child cannot close
+leftovers, so `start` and `agent_command` check `/proc/self/fd` and refuse with
+`StartFault::InheritedFds` (`Hardening::fds` can allow it). The host network mode shares the host's
+loopback services and abstract unix sockets and is unfiltered; there is no egress proxy here, so the
+only filtered mode is the forwarded endpoint.
+
 A command never runs unsandboxed: when the sandbox cannot confine one (no `bwrap`, namespaces
 refused, a bad working directory), `Shell` refuses and says why.
 

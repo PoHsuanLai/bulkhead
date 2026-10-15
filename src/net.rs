@@ -7,7 +7,13 @@
 //!   that socket to one loopback address (a per-session model endpoint). The agent
 //!   sees an http base URL on its own loopback and nothing else.
 //! - `Host`: the host's network, unfiltered. Weaker: the agent can reach any address and can send
-//!   whatever it holds (its own login, a key) anywhere.
+//!   whatever it holds (its own login, a key) anywhere. It also shares the network namespace
+//!   itself, which means every loopback service of the host, and the abstract unix sockets (they
+//!   live in the network namespace, not the file system): an abstract X11 or D-Bus socket
+//!   is reachable even though `/tmp` and `/run` are empty. The only filtered way out here
+//!   is `EndpointOnly` (one forwarded endpoint). There is no per-host allow-list proxy in this
+//!   crate: a general egress proxy is a known gap, and `Host` should be chosen per program by
+//!   the person, never as a default.
 
 use crate::AbsPath;
 use serde::{Deserialize, Serialize};
