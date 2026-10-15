@@ -17,7 +17,7 @@
 //!
 //! The outer is our own unreaped child and its children cannot be reaped while it is stopped, so
 //! no pid in the sequence can have been reused. Signals to processes other than our direct child
-//! go through the `kill` program, as std offers no other way without `unsafe`. Where that fails,
+//! go through the `kill` program (found by absolute path), as std offers no other way without `unsafe`. Where that fails,
 //! or `/proc` lacks the `children` files, the kill falls back to killing the outer process only.
 
 use std::process::{Child, Command, Stdio};
@@ -74,9 +74,20 @@ impl Signal {
     }
 }
 
+/// Where the `kill` program lives. Looked up by absolute path, never through the daemon's own
+/// `PATH`, which a planted `kill` earlier in it could hijack.
+const KILL_PROGRAMS: &[&str] = &["/usr/bin/kill", "/bin/kill"];
+
 /// Sends `signal` to `pids` with the `kill` program; whether it worked.
 fn send(signal: Signal, pids: &[u32]) -> bool {
-    Command::new("kill")
+    let Some(program) = KILL_PROGRAMS
+        .iter()
+        .find(|p| std::path::Path::new(p).is_file())
+    else {
+        return false;
+    };
+    Command::new(program)
+        .env_clear()
         .arg(signal.flag())
         .args(pids.iter().map(u32::to_string))
         .stdin(Stdio::null())

@@ -1,6 +1,8 @@
 //! Redaction of obvious secrets from command output, a pure function. It is a net with large
 //! holes, not a guarantee: it catches assignments to secret-looking names, well-known token
-//! shapes, `Bearer` credentials, credentials inside URLs and private-key blocks. The sandbox keeps
+//! shapes, `Bearer` credentials, credentials inside URLs and in their query strings, `--password`
+//! style flags, `name = value` with spaces, whole `Cookie:` lines, and private-key blocks (PGP
+//! too). Not caught: short flags such as `-p x`, and secrets with no name or shape. The sandbox keeps
 //! the environment and the home directory out of reach; this is the second line.
 
 /// What replaces a secret.
@@ -71,25 +73,60 @@ fn url_password(word: &str) -> Option<String> {
     Some(format!("{scheme}://{user}:{MASK}@{host}{tail}"))
 }
 
-/// What a word is, given the word before it.
+/// What the next word is, given the words before it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Next {
     Plain,
+    /// The next word is a credential.
     SecretFollows,
+    /// A secret-looking name with no separator: if `=` or `:` comes next, the word after that
+    /// is the value (`password = x`).
+    NameFollows,
+    /// A `--password`-style flag: the next word is its value, unless it is itself a flag.
+    FlagFollows,
+    /// Every word to the end of the line (a `Cookie:` header holds many pairs).
+    RestOfLine,
 }
 
 /// Authorization schemes: the scheme word stays, the credential after it is masked.
 const AUTH_SCHEMES: &[&str] = &["bearer", "basic"];
 
-fn word(w: &str, after_credential: bool) -> (String, Next) {
+/// `https://host/path?api_key=abc&x=1` with the values of secret-looking parameters masked.
+fn query_secrets(w: &str) -> Option<String> {
+    let (base, query) = w.split_once('?')?;
+    let mut changed = false;
+    let parts: Vec<String> = query
+        .split('&')
+        .map(|p| match p.split_once('=') {
+            Some((name, value)) if secret_name(name) && !value.is_empty() => {
+                changed = true;
+                format!("{name}={MASK}")
+            }
+            _ => p.to_owned(),
+        })
+        .collect();
+    changed.then(|| format!("{base}?{}", parts.join("&")))
+}
+
+fn word(w: &str, prev: Next) -> (String, Next) {
+    match prev {
+        Next::RestOfLine => return (MASK.to_owned(), Next::RestOfLine),
+        Next::FlagFollows if !w.starts_with('-') => return (MASK.to_owned(), Next::Plain),
+        Next::NameFollows if w == "=" || w == ":" => return (w.to_owned(), Next::SecretFollows),
+        _ => {}
+    }
     // Before the credential check, so `Authorization: Bearer <token>` masks the token, not the
     // scheme word.
     if AUTH_SCHEMES.iter().any(|s| w.eq_ignore_ascii_case(s)) {
         return (w.to_owned(), Next::SecretFollows);
     }
-    if after_credential || token_shaped(w) {
+    if prev == Next::SecretFollows || token_shaped(w) {
         return (MASK.to_owned(), Next::Plain);
     }
     if let Some(masked) = url_password(w) {
+        return (masked, Next::Plain);
+    }
+    if let Some(masked) = query_secrets(w) {
         return (masked, Next::Plain);
     }
     let split = w.find(['=', ':']).filter(|&i| i > 0);
@@ -97,17 +134,30 @@ fn word(w: &str, after_credential: bool) -> (String, Next) {
         let (name, value) = (&w[..i], &w[i + 1..]);
         if secret_name(name) && !value.starts_with("//") {
             if value.is_empty() {
-                return (w.to_owned(), Next::SecretFollows);
+                let rest = name.to_ascii_lowercase().contains("cookie");
+                let next = if rest {
+                    Next::RestOfLine
+                } else {
+                    Next::SecretFollows
+                };
+                return (w.to_owned(), next);
             }
             return (format!("{}{}", &w[..=i], MASK), Next::Plain);
         }
+    } else if secret_name(w) {
+        let next = if w.starts_with('-') {
+            Next::FlagFollows
+        } else {
+            Next::NameFollows
+        };
+        return (w.to_owned(), next);
     }
     (w.to_owned(), Next::Plain)
 }
 
 fn line(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let mut follows = false;
+    let mut next = Next::Plain;
     let mut rest = text;
     while !rest.is_empty() {
         let space = rest.starts_with(char::is_whitespace);
@@ -118,9 +168,9 @@ fn line(text: &str) -> String {
         if space {
             out.push_str(run);
         } else {
-            let (shown, next) = word(run, follows);
+            let (shown, after) = word(run, next);
             out.push_str(&shown);
-            follows = matches!(next, Next::SecretFollows);
+            next = after;
         }
         rest = tail;
     }
@@ -136,7 +186,7 @@ pub fn redact(text: &str) -> String {
             in_key = !l.contains("-----END ");
             continue;
         }
-        if l.contains("-----BEGIN ") && l.contains("PRIVATE KEY-----") {
+        if l.contains("-----BEGIN ") && l.contains("PRIVATE KEY") {
             in_key = !l.contains("-----END ");
             out.push(MASK.to_owned());
             continue;

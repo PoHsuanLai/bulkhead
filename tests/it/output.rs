@@ -46,6 +46,23 @@ fn secrets_are_masked_and_ordinary_text_is_not() {
             "before\n-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\nBBBB\n-----END OPENSSH PRIVATE KEY-----\nafter",
             "before\n[redacted]\nafter",
         ),
+        // Gaps closed: spaced assignment, flag value, query string, cookie line, PGP block.
+        ("password = hunter2 ok", "password = [redacted] ok"),
+        (
+            "login --password hunter2 now",
+            "login --password [redacted] now",
+        ),
+        ("run --token --verbose", "run --token --verbose"),
+        ("the token is here", "the token is here"),
+        (
+            "GET https://h.example/p?api_key=abc&page=2",
+            "GET https://h.example/p?api_key=[redacted]&page=2",
+        ),
+        ("Cookie: a=1; b=2", "Cookie: [redacted] [redacted]"),
+        (
+            "x\n-----BEGIN PGP PRIVATE KEY BLOCK-----\nAAAA\n-----END PGP PRIVATE KEY BLOCK-----\ny",
+            "x\n[redacted]\ny",
+        ),
         (
             "t eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop",
             "t [redacted]",
