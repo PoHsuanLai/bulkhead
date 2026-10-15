@@ -170,10 +170,21 @@ fn scope_applies(program: &Path, session: &UserSession, limits: &Limits) -> bool
 }
 
 /// `systemd-run --user --scope` with the cgroup properties, ready for the program to run.
+///
+/// `--expand-environment=no`: `systemd-run --scope` otherwise expands `$NAME` and `${...}` in the
+/// command it runs (systemd 254 and later), which rewrites the script's own variables before `sh`
+/// sees them. A `systemd-run` too old to know the flag fails the start-up probe, so limits fail
+/// closed there.
 fn scope_command(program: &Path, session: &UserSession, limits: &Limits) -> Command {
     let mut command = Command::new(program);
     command
-        .args(["--user", "--scope", "--quiet", "--collect"])
+        .args([
+            "--user",
+            "--scope",
+            "--quiet",
+            "--collect",
+            "--expand-environment=no",
+        ])
         .arg(format!("--property=MemoryMax={}", limits.memory.0))
         .arg("--property=MemorySwapMax=0")
         .arg(format!("--property=TasksMax={}", limits.pids))
@@ -399,6 +410,7 @@ mod tests {
         for want in [
             "--user",
             "--scope",
+            "--expand-environment=no",
             "--property=MemoryMax=2147483648",
             "--property=MemorySwapMax=0",
             "--property=TasksMax=256",
