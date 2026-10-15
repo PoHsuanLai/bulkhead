@@ -74,6 +74,12 @@ pub enum ShellFault {
     /// The sandbox program did not start.
     #[error("the sandbox program did not start")]
     Spawn,
+    /// A file descriptor above 2 is not close-on-exec and would leak into the sandbox.
+    #[error("an inheritable file descriptor would leak into the sandbox")]
+    InheritedFds,
+    /// The sandbox's syscall filter file was not given.
+    #[error("the syscall filter file was not given")]
+    FilterFile,
     /// No such terminal (never made, or released).
     #[error("no such terminal")]
     NoSuchTerminal,
@@ -87,6 +93,8 @@ impl From<StartFault> for ShellFault {
         match fault {
             StartFault::Cannot(why) => ShellFault::CannotSandbox(why),
             StartFault::Spawn => ShellFault::Spawn,
+            StartFault::InheritedFds => ShellFault::InheritedFds,
+            StartFault::FilterFile => ShellFault::FilterFile,
         }
     }
 }
