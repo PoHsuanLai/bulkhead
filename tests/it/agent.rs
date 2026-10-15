@@ -86,11 +86,7 @@ fn endpoint_only_starts_the_forwarder_first_and_binds_one_socket() {
         abs("/run/user/1000/bulkhead/ep.sock"),
         40123,
     );
-    let args = agent_bwrap_args(
-        &run(AgentNet::Endpoint(bind), Vec::new()),
-        &[],
-        &Profile::bare(),
-    );
+    let args = agent_bwrap_args(&run(AgentNet::Endpoint(bind), Vec::new()), &Profile::bare());
     assert!(!args.iter().any(|a| a == "--share-net"));
     assert!(has(
         &args,
@@ -301,7 +297,6 @@ fn a_protected_path_is_bound_read_only_after_the_workspace() {
 fn the_seccomp_profile_hands_bubblewrap_descriptor_three() {
     let on = agent_bwrap_args(
         &run(AgentNet::None, Vec::new()),
-        &[],
         &Profile::bare().with_seccomp(),
     );
     assert!(has(&on, &["--seccomp", "3"]));

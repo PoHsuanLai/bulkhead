@@ -342,8 +342,9 @@ mod tests {
         }
         let at = w.iter().position(|a| a == "--").expect("separator");
         assert_eq!(w[at + 1], SH, "step scope: sh runs inside the scope");
-        assert_eq!(w[at + 5], "900", "step scope: cpu seconds still set");
-        assert_eq!(w[at + 6], "-", "step scope: no address-space cap");
+        assert_eq!(w[at + 5], "none", "step scope: no filter to feed");
+        assert_eq!(w[at + 6], "900", "step scope: cpu seconds still set");
+        assert_eq!(w[at + 7], "-", "step scope: no address-space cap");
     }
 
     #[test]

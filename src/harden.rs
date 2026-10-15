@@ -58,7 +58,7 @@ impl Limits {
     /// The limits when every number is usable: none zero, memory a whole number of pages.
     pub(crate) fn usable(&self) -> bool {
         self.memory.0 >= PAGE
-            && self.memory.0 % PAGE == 0
+            && self.memory.0.is_multiple_of(PAGE)
             && self.pids > 0
             && self.cpu_seconds > 0
             && self.tmpfs.0 > 0
