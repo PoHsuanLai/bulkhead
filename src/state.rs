@@ -23,6 +23,9 @@ pub enum CannotSandbox {
     /// delegates the cgroup controllers, no `sh`, or bubblewrap without `--size`).
     #[error("resource limits cannot be applied here")]
     LimitsUnavailable,
+    /// The seccomp filter was asked for and cannot be installed here.
+    #[error("the syscall filter cannot be installed here")]
+    SeccompUnavailable,
     /// The limits are not usable numbers (zero, or memory not a whole number of pages).
     #[error("the resource limits are not usable")]
     BadLimits,

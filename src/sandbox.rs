@@ -141,6 +141,9 @@ pub enum StartFault {
     /// The sandbox cannot confine this command; nothing was run.
     #[error("cannot sandbox: {0}")]
     Cannot(crate::CannotSandbox),
+    /// The sandbox has a syscall filter and the caller gave no file to hand it over in.
+    #[error("the syscall filter file was not given")]
+    FilterFile,
     /// The sandbox program could not be started.
     #[error("the sandbox program did not start")]
     Spawn,

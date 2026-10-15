@@ -31,17 +31,18 @@ mod path;
 mod profile;
 mod redact;
 mod sandbox;
+mod seccomp;
 mod state;
 mod tool;
 
 pub use agent::{
-    Access, AgentRun, Bind, ProtectFault, INSIDE_FORWARDER, INSIDE_SOCKET, Overlay, agent_bwrap_args,
-    present_hidden, present_hidden_where,
+    Access, AgentRun, Bind, INSIDE_FORWARDER, INSIDE_SOCKET, Overlay, ProtectFault,
+    agent_bwrap_args, present_hidden, present_hidden_where,
 };
 pub use bwrap::{BwrapSandbox, Detected, HIDDEN, bwrap_args};
 pub use bwrap_job::BwrapJob;
 pub use env::{SANDBOX_HOME, SANDBOX_PATH, dropped, sandbox_env};
-pub use harden::{AcceptNoLimits, Bytes, Hardening, LimitPolicy, Limits};
+pub use harden::{AcceptNoLimits, Bytes, Hardening, LimitPolicy, Limits, Seccomp};
 pub use launch::{Enforcement, UserSession};
 pub use net::{AgentNet, EndpointBind, NetFault, NetworkMode, RESOLVER_FILES};
 pub use output::{Shown, Tail, shown};
@@ -52,6 +53,7 @@ pub use sandbox::{
     Argv, ByteLimit, Captured, Cut, EnvVar, ExitReport, Job, KILLED, Network, RunSpec, Sandbox,
     StartFault,
 };
+pub use seccomp::{SeccompFault, default_filter};
 pub use state::{CannotSandbox, SandboxState};
 pub use tool::{
     DEFAULT_KEEP, Launch, MAX_KEEP, MAX_TERMINALS, Shell, ShellFault, Snapshot, TermId,

@@ -11,12 +11,14 @@
 //! not resolve. FINDINGS.md "Sandboxed shell" lists what that does not
 //! stop.
 
+use crate::agent::{AgentRun, agent_bwrap_args, present_hidden};
 use crate::bwrap_job::BwrapJob;
 use crate::confinement::{Share, confinement};
-use crate::harden::Hardening;
+use crate::harden::{Hardening, Seccomp};
 use crate::launch::{Enforcement, Env, Feed, Launcher, UserSession};
 use crate::profile::Profile;
-use crate::sandbox::{EnvVar, Network, RunSpec, Sandbox, StartFault};
+use crate::sandbox::{Network, RunSpec, Sandbox, StartFault};
+use crate::seccomp::default_filter;
 use crate::{AbsPath, CannotSandbox, RootState, SandboxState};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -53,6 +55,8 @@ pub fn bwrap_args(spec: &RunSpec, hidden: &[&str], profile: &Profile) -> Vec<Str
 pub struct BwrapSandbox {
     program: PathBuf,
     launcher: Launcher,
+    /// The seccomp filter bubblewrap is given, when it is on.
+    filter: Option<Vec<u8>>,
 }
 
 impl BwrapSandbox {
@@ -68,18 +72,56 @@ impl BwrapSandbox {
 
     /// The profile this sandbox adds to every command line: scratch directory sizes.
     pub fn profile(&self) -> Profile {
-        match self.launcher.limits() {
+        let sized = match self.launcher.limits() {
             Some(limits) => Profile::bare().with_tmpfs_size(limits.tmpfs),
             None => Profile::bare(),
+        };
+        match self.filter {
+            Some(_) => sized.with_seccomp(),
+            None => sized,
         }
     }
 
-    /// The command that starts bubblewrap on `args`, limited as configured, with exactly the
-    /// environment `env` (the caller reads its stdio). For an agent process: see
-    /// `agent_bwrap_args`.
-    pub fn agent_command(&self, args: &[String], env: &[EnvVar]) -> Command {
-        self.launcher
-            .command(&self.program, args, &Feed::NoFilter, Env::Exactly(env))
+    /// Writes the seccomp filter to a new file at `path` (mode 0600; it must not exist), for
+    /// `agent_command`. Nothing is written, and `Ok` is returned, when the filter is off.
+    pub fn write_filter(&self, path: &AbsPath) -> std::io::Result<()> {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let Some(filter) = &self.filter else {
+            return Ok(());
+        };
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path.as_str())?;
+        file.write_all(filter)
+    }
+
+    /// The command that confines the agent process `run`: bubblewrap with the sandbox's own
+    /// profile (scratch sizes, seccomp), started under the resource limits, with exactly the
+    /// environment of `run`. The caller sets the stdio and spawns it.
+    ///
+    /// When the seccomp filter is on, `filter` must name a file written with `write_filter`;
+    /// without one this is `StartFault::FilterFile`, never an unfiltered agent. Every
+    /// descriptor the caller opens before spawning must be close-on-exec (see `inherited_fds`).
+    pub fn agent_command(
+        &self,
+        run: &AgentRun,
+        filter: Option<&AbsPath>,
+    ) -> Result<Command, StartFault> {
+        if let SandboxState::Cannot(why) = self.check(&run.cwd) {
+            return Err(StartFault::Cannot(why));
+        }
+        let feed = match (&self.filter, filter) {
+            (None, _) => Feed::NoFilter,
+            (Some(_), Some(file)) => Feed::FromFile(file.clone()),
+            (Some(_), None) => return Err(StartFault::FilterFile),
+        };
+        let args = agent_bwrap_args(run, &present_hidden(), &self.profile());
+        Ok(self
+            .launcher
+            .command(&self.program, &args, &feed, Env::Exactly(&run.env)))
     }
 
     /// `detect_with` for the default hardening: cgroup limits, the session of this process.
@@ -104,28 +146,61 @@ impl BwrapSandbox {
             .map(|d| Path::new(d).join("bwrap"))
             .find(|p| p.is_file())
             .ok_or(CannotSandbox::NotInstalled)?;
-        if !bwrap_runs(&program, &[]) {
+        if !bwrap_runs(&program, &[], None) {
             return Err(CannotSandbox::NamespacesDenied);
         }
+        let filter = match hardening.seccomp {
+            Seccomp::Off => None,
+            Seccomp::Default => {
+                let bytes = default_filter().map_err(|_| CannotSandbox::SeccompUnavailable)?;
+                if !bwrap_runs(&program, &["--seccomp", "0"], Some(&bytes)) {
+                    return Err(CannotSandbox::SeccompUnavailable);
+                }
+                Some(bytes)
+            }
+        };
         let launcher = Launcher::resolve(path, &hardening.limits, session)?;
         if launcher.limits().is_some()
-            && !bwrap_runs(&program, &["--size", "1048576", "--tmpfs", "/tmp"])
+            && !bwrap_runs(&program, &["--size", "1048576", "--tmpfs", "/tmp"], None)
         {
             return Err(CannotSandbox::LimitsUnavailable);
         }
-        Ok(Self { program, launcher })
+        Ok(Self {
+            program,
+            launcher,
+            filter,
+        })
     }
 }
 
-/// One throwaway run of `program` with `extra` arguments; whether it succeeded.
-fn bwrap_runs(program: &Path, extra: &[&str]) -> bool {
+/// A pipe already holding `bytes` (a filter is far below the pipe's capacity), read end only.
+fn filter_pipe(bytes: &[u8]) -> Result<Stdio, StartFault> {
+    use std::io::Write;
+    let (reader, mut writer) = std::io::pipe().map_err(|_| StartFault::Spawn)?;
+    writer.write_all(bytes).map_err(|_| StartFault::Spawn)?;
+    Ok(Stdio::from(reader))
+}
+
+/// One throwaway run of `program` with `extra` arguments, `stdin` as its standard input (empty
+/// when none); whether it succeeded.
+fn bwrap_runs(program: &Path, extra: &[&str], stdin: Option<&[u8]>) -> bool {
+    use std::io::Write;
+    let Ok((reader, mut writer)) = std::io::pipe() else {
+        return false;
+    };
+    if let Some(bytes) = stdin
+        && writer.write_all(bytes).is_err()
+    {
+        return false;
+    }
+    drop(writer);
     Command::new(program)
         .args(["--ro-bind", "/", "/", "--unshare-all", "--die-with-parent"])
         .args(extra)
         .args(["--", "true"])
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
-        .stdin(Stdio::null())
+        .stdin(Stdio::from(reader))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -164,10 +239,14 @@ impl Sandbox for BwrapSandbox {
             .filter(|d| Path::new(d).is_dir())
             .collect();
         let args = bwrap_args(spec, &present, &self.profile());
+        let (feed, stdin) = match &self.filter {
+            None => (Feed::NoFilter, Stdio::null()),
+            Some(bytes) => (Feed::FromStdin, filter_pipe(bytes)?),
+        };
         let command = self
             .launcher
-            .command(&self.program, &args, &Feed::NoFilter, Env::Minimal);
-        BwrapJob::spawn(command, spec.keep, Stdio::null())
+            .command(&self.program, &args, &feed, Env::Minimal);
+        BwrapJob::spawn(command, spec.keep, stdin)
     }
 }
 

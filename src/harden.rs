@@ -99,10 +99,24 @@ impl LimitPolicy {
     }
 }
 
+/// Whether the default seccomp filter is installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Seccomp {
+    /// The default filter (`seccomp`): no nested user namespaces, `ptrace`, `bpf`, key rings,
+    /// mounts, `io_uring` and similar. A sandbox that cannot install it is not created.
+    #[default]
+    Default,
+    /// No filter, chosen by the person.
+    Off,
+}
+
 /// Everything a caller chooses about hardening.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Hardening {
     /// Resource limits.
     pub limits: LimitPolicy,
+    /// The syscall filter.
+    pub seccomp: Seccomp,
 }

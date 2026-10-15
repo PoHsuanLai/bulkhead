@@ -314,3 +314,15 @@ fn a_protected_path_is_bound_read_only_after_the_workspace() {
         );
     }
 }
+
+#[test]
+fn the_seccomp_profile_hands_bubblewrap_descriptor_three() {
+    let on = agent_bwrap_args(
+        &run(AgentNet::None, Vec::new()),
+        &[],
+        &Profile::bare().with_seccomp(),
+    );
+    assert!(has(&on, &["--seccomp", "3"]));
+    let off = agent_bwrap_args(&run(AgentNet::None, Vec::new()), &[], &Profile::bare());
+    assert!(!off.iter().any(|a| a == "--seccomp"));
+}

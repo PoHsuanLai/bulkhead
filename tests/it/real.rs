@@ -244,6 +244,7 @@ fn the_cpu_time_limit_reaches_the_command() {
             cpu_seconds: 7,
             ..Limits::default()
         }),
+        ..Hardening::default()
     };
     let Some(sandbox) = sandbox_with(&hardening) else {
         return;
@@ -253,4 +254,22 @@ fn the_cpu_time_limit_reaches_the_command() {
     let (out, exit) = run(&mut shell, &cwd, "ulimit -t");
     assert_eq!(exit, ExitReport::Code(0), "{out}");
     assert_eq!(out.trim(), "7");
+}
+
+/// The default syscall filter stops a command from making a user namespace of its own, and
+/// leaves ordinary work alone.
+#[test]
+fn the_default_filter_blocks_a_nested_user_namespace() {
+    let Some(sandbox) = sandbox() else { return };
+    if !Path::new("/usr/bin/unshare").exists() {
+        eprintln!("SKIP seccomp test: no unshare");
+        return;
+    }
+    let (_root, cwd) = scratch();
+    let mut shell = Shell::new(sandbox);
+    let (out, exit) = run(&mut shell, &cwd, "unshare -U true; echo status=$?");
+    assert_eq!(exit, ExitReport::Code(0), "{out}");
+    assert!(!out.contains("status=0"), "unshare -U must fail: {out}");
+    let (out, exit) = run(&mut shell, &cwd, "echo fine");
+    assert_eq!((exit, out.trim()), (ExitReport::Code(0), "fine"));
 }

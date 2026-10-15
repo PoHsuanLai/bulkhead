@@ -43,6 +43,7 @@ pub(crate) fn confinement(share: Share, hidden: &[&str], profile: &Profile) -> V
         "--proc",
         "/proc",
     ]));
+    args.extend(profile.seccomp());
     for dir in hidden {
         args.extend(profile.tmpfs(dir));
     }
