@@ -1,4 +1,5 @@
 mod agent;
+mod apparmor;
 mod endpoint;
 mod forward;
 mod output;

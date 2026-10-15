@@ -34,7 +34,11 @@ fn the_sandbox_gets_the_command_cwd_filtered_env_and_no_network() {
 
 #[test]
 fn a_withheld_sandbox_refuses_and_runs_nothing() {
-    for why in [CannotSandbox::NotInstalled, CannotSandbox::NamespacesDenied] {
+    for why in [
+        CannotSandbox::NotInstalled,
+        CannotSandbox::NamespacesDenied,
+        CannotSandbox::RestrictedByAppArmor,
+    ] {
         let (sandbox, seen) = FakeSandbox::withheld(why);
         let mut shell = Shell::new(sandbox);
         assert_eq!(

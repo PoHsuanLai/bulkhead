@@ -14,6 +14,7 @@
 //! given, and only inside the sandbox.
 
 mod agent;
+mod apparmor;
 mod bwrap;
 mod bwrap_job;
 mod bwrap_kill;
@@ -41,6 +42,7 @@ pub use agent::{
     Access, AgentRun, Bind, INSIDE_FORWARDER, INSIDE_SOCKET, Overlay, ProtectFault,
     agent_bwrap_args,
 };
+pub use apparmor::{RESTRICT_USERNS, namespaces_refused, refusal_at};
 pub use bwrap::{BwrapSandbox, Detected, bwrap_args};
 pub use bwrap_job::BwrapJob;
 pub use env::{SANDBOX_HOME, SANDBOX_PATH, dropped, sandbox_env};

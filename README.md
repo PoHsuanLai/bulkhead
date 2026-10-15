@@ -45,6 +45,34 @@ refused, a bad working directory), `Shell` refuses and says why.
   process, including an endpoint-only network mode served by a small forwarder
   (`bulkhead-forward`, or your own binary calling `cli::forward_main`).
 
+## Ubuntu 24.04 and later: AppArmor
+
+Ubuntu sets `kernel.apparmor_restrict_unprivileged_userns=1`, so an unprivileged `bwrap` cannot
+make a user namespace and no sandbox is created. bulkhead reads that setting and reports
+`CannotSandbox::RestrictedByAppArmor` instead of the general "kernel refuses" reason. It still
+fails closed. Two ways out; pick one.
+
+Allow it for bubblewrap only. Save this as `/etc/apparmor.d/bwrap` and run
+`sudo apparmor_parser -r /etc/apparmor.d/bwrap`:
+
+```
+abi <abi/4.0>,
+include <tunables/global>
+
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+
+  include if exists <local/bwrap>
+}
+```
+
+Or switch the restriction off for the whole machine:
+
+```
+echo 'kernel.apparmor_restrict_unprivileged_userns = 0' | sudo tee /etc/sysctl.d/60-userns.conf
+sudo sysctl --system
+```
+
 ## Tests
 
 `cargo test` runs everything that needs no privileges. The tests that use a real `bwrap` skip,

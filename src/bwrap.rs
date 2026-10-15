@@ -12,6 +12,7 @@
 //! stop.
 
 use crate::agent::{AgentRun, agent_bwrap_args};
+use crate::apparmor::{RESTRICT_USERNS, refusal_at};
 use crate::bwrap_job::BwrapJob;
 use crate::confinement::{Share, confinement};
 use crate::fds::{InheritedFds, inherited_fds};
@@ -160,7 +161,7 @@ impl BwrapSandbox {
             .find(|p| p.is_file())
             .ok_or(CannotSandbox::NotInstalled)?;
         if !bwrap_runs(&program, &[], None) {
-            return Err(CannotSandbox::NamespacesDenied);
+            return Err(refusal_at(Path::new(RESTRICT_USERNS)));
         }
         let filter = match hardening.seccomp {
             Seccomp::Off => None,
