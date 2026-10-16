@@ -352,11 +352,8 @@ fn reading_a_head_is_bounded_in_size_and_time() {
     let line = "X-Pad: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n";
     near.write_all(b"GET http://a.example/ HTTP/1.1\r\n")
         .expect("write");
-    for _ in 0..600 {
-        if near.write_all(line.as_bytes()).is_err() {
-            break;
-        }
-    }
+    // One write: many small ones each cost a socket buffer slot and fill it before anyone reads.
+    near.write_all(line.repeat(600).as_bytes()).expect("write");
     assert_eq!(
         read_head(&mut far, Duration::from_secs(5)),
         Err(BadRequest::TooLong)
