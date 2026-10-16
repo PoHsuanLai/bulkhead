@@ -16,13 +16,20 @@ path = "src/bin/bulkhead-forward.rs"
 [[bin]]
 name = "bulkhead-enter"
 path = "src/bin/bulkhead-enter.rs"
+required-features = ["landlock"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-landlock = "0.4"
+landlock = { version = "0.4", optional = true }
+
+[features]
+# The exec stage's Landlock calls (`enter::apply`, `enter::enter_main` and the `bulkhead-enter`
+# binary). Off by default: a crate that only builds the agent's command line (the plan, the argv,
+# the report line) links no sandbox library; the binary that IS the exec stage turns it on.
+landlock = ["dep:landlock"]
 
 [dev-dependencies]
 tempfile = "3"

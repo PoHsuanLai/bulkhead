@@ -6,12 +6,13 @@
 //!
 //! - [`plan`]: the words the stage is given, built and parsed strictly, and [`LandlockLevel`].
 //! - `build`: the plan for one `AgentRun`, from the same lists the bubblewrap arguments use.
-//! - `apply`: the `landlock` calls (Linux only).
+//! - `apply`: the `landlock` calls (Linux, behind the `landlock` feature, so a crate that only
+//!   builds the command line links no sandbox library).
 
 mod build;
 pub mod plan;
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "landlock"))]
 mod apply;
 
 pub(crate) use build::plan_for;
@@ -20,14 +21,14 @@ pub use plan::{EnterFault, EnterPlan, LandlockLevel, NetRule};
 /// Where the exec stage appears inside the sandbox.
 pub const INSIDE_ENTER: &str = "/run/bulkhead/enter";
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "landlock"))]
 pub use apply::apply;
 
 /// The exec stage's `main`, as a function so any binary can be it:
 /// `NAME [--read P]... [--write P]... [--device P]... NETWORK -- PROGRAM [ARGS...]`.
 /// Exits 2 on words it refuses, 3 when Landlock fails in a way that is not "not available", and
 /// 127 when the program cannot be started.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "landlock"))]
 pub fn enter_main(name: &str) -> std::process::ExitCode {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, ExitCode};
@@ -51,9 +52,10 @@ pub fn enter_main(name: &str) -> std::process::ExitCode {
     ExitCode::from(127)
 }
 
-/// The exec stage's `main`; Landlock is Linux's.
-#[cfg(not(target_os = "linux"))]
+/// The exec stage's `main` in a build that cannot apply Landlock: not Linux, or without the
+/// `landlock` feature.
+#[cfg(not(all(target_os = "linux", feature = "landlock")))]
 pub fn enter_main(name: &str) -> std::process::ExitCode {
-    eprintln!("{name} runs where bubblewrap does: on Linux");
+    eprintln!("{name} needs Linux and bulkhead's `landlock` feature");
     std::process::ExitCode::from(2)
 }

@@ -61,6 +61,8 @@ refused, a bad working directory), `Shell` refuses and says why.
   port or nowhere), prints `bulkhead-enter: landlock=full|files-only|none` on standard error
   (`LandlockLevel::from_report_line` reads it), and execs the agent. On a kernel without Landlock
   or without its network rules it still runs the agent, and says so in that line.
+  The Landlock calls (`enter::apply`, `enter::enter_main`, the binary) are behind the `landlock`
+  feature, off by default: a crate that only builds the command line links no sandbox library.
 
 ## Ubuntu 24.04 and later: AppArmor
 
