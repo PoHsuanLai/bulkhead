@@ -63,10 +63,10 @@ pub fn splice<A: Duplex, B: Duplex>(a: A, b: B) {
 
 /// A counter that keeps a listener from serving more than [`MAX_LIVE`] connections at once.
 #[derive(Debug, Clone, Default)]
-struct Live(Arc<AtomicUsize>);
+pub(crate) struct Live(Arc<AtomicUsize>);
 
 impl Live {
-    fn take(&self) -> Option<Held> {
+    pub(crate) fn take(&self) -> Option<Held> {
         let before = self.0.fetch_add(1, Ordering::SeqCst);
         if before >= MAX_LIVE {
             self.0.fetch_sub(1, Ordering::SeqCst);
@@ -76,7 +76,7 @@ impl Live {
     }
 }
 
-struct Held(Arc<AtomicUsize>);
+pub(crate) struct Held(Arc<AtomicUsize>);
 
 impl Drop for Held {
     fn drop(&mut self) {

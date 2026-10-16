@@ -102,8 +102,13 @@ impl Overlay {
 }
 
 impl AgentRun {
-    /// A run of `argv` in `cwd`, with `env` and `net`, and no extra binds or overlays.
-    pub fn new(argv: Argv, cwd: AbsPath, env: Vec<EnvVar>, net: AgentNet) -> Self {
+    /// A run of `argv` in `cwd`, with `env` and `net`, and no extra binds or overlays. In the
+    /// allow-list mode the proxy variables (`AgentNet::proxy_env`) are put into `env`, over any
+    /// of the same names the caller gave, so the agent cannot be started without them.
+    pub fn new(argv: Argv, cwd: AbsPath, mut env: Vec<EnvVar>, net: AgentNet) -> Self {
+        let proxy = net.proxy_env();
+        env.retain(|v| !proxy.iter().any(|p| p.name == v.name));
+        env.extend(proxy);
         Self {
             argv,
             cwd,
@@ -151,7 +156,7 @@ impl AgentRun {
 pub fn agent_bwrap_args(run: &AgentRun, profile: &Profile) -> Vec<String> {
     let share = match run.net {
         AgentNet::Host => Share::HostNet,
-        AgentNet::None | AgentNet::Endpoint(_) => Share::Nothing,
+        AgentNet::None | AgentNet::Endpoint(_) | AgentNet::Allowlist(_) => Share::Nothing,
     };
     let mut args = confinement(share, profile);
     for bind in &run.binds {
@@ -172,7 +177,7 @@ pub fn agent_bwrap_args(run: &AgentRun, profile: &Profile) -> Vec<String> {
         let path = path.as_str();
         args.extend(["--ro-bind", path, path].map(str::to_owned));
     }
-    if let AgentNet::Endpoint(bind) = &run.net {
+    if let AgentNet::Endpoint(bind) | AgentNet::Allowlist(bind) = &run.net {
         args.extend([
             "--ro-bind".to_owned(),
             bind.forwarder.as_str().to_owned(),
@@ -195,7 +200,9 @@ fn protectable(path: &AbsPath) -> bool {
 /// The words bubblewrap runs: the agent itself, or the forwarder that starts it.
 fn inner(run: &AgentRun) -> Vec<String> {
     match &run.net {
-        AgentNet::Endpoint(bind) => forwarder_words(bind, run.argv.words()),
+        AgentNet::Endpoint(bind) | AgentNet::Allowlist(bind) => {
+            forwarder_words(bind, run.argv.words())
+        }
         AgentNet::None | AgentNet::Host => run.argv.words().to_vec(),
     }
 }

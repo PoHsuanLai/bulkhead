@@ -5,8 +5,9 @@
 //!   environment); `FakeSandbox` records what it was asked and answers from a script.
 //! - `Shell`: the terminal table over a sandbox. It never runs a command unsandboxed; when the
 //!   sandbox cannot confine one it refuses with the reason.
-//! - `agent`, `net`, `forward`: the confinement of a long-running agent process: its bubblewrap
-//!   arguments, the three network modes, and the forwarder and bridge of the endpoint-only mode.
+//! - `agent`, `net`, `forward`, `egress`: the confinement of a long-running agent process: its
+//!   bubblewrap arguments, the four network modes, the forwarder and bridge of the endpoint-only mode,
+//!   and the filtering proxy of the allow-list mode.
 //! - `redact`, `Tail`, `shown`: output is bounded and secrets are masked before anyone reads it.
 //! - `sandbox_env`: the environment is cleared and rebuilt from an allowlist.
 //!
@@ -20,6 +21,8 @@ mod bwrap_job;
 mod bwrap_kill;
 pub mod cli;
 mod confinement;
+#[cfg(unix)]
+pub mod egress;
 mod env;
 pub mod fake;
 mod fds;

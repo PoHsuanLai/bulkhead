@@ -1,21 +1,32 @@
-//! The network a sandboxed agent process gets . Three modes, and the mode is
-//! a choice made per program by the caller, never a fallback.
+//! The network a sandboxed agent process gets. Four modes, and the mode is a choice made per
+//! program by the caller, never a fallback.
 //!
 //! - `None`: a new network namespace with only a loopback. Nothing outside is reachable.
 //! - `EndpointOnly`: the same namespace, plus a forwarder inside it on `127.0.0.1:<port>` that
 //!   hands every connection to one unix socket bind-mounted from outside; outside, the caller bridges
 //!   that socket to one loopback address (a per-session model endpoint). The agent
 //!   sees an http base URL on its own loopback and nothing else.
+//! - `Allowlist`: the same namespace and forwarder, but outside the socket is served by a
+//!   filtering proxy (`egress`) instead of the plain bridge. The agent gets `HTTPS_PROXY` and
+//!   `HTTP_PROXY` pointing at the forwarder, and the namespace stops anything that ignores them.
+//!   The proxy lets `CONNECT host:port` and plain `http://` requests through to the hosts a
+//!   typed policy names (deny wins over allow; exact hosts and `*.domain` wildcards; ports 443
+//!   and 80 unless the policy lists others) and refuses names that resolve to loopback, private,
+//!   link-local or shared addresses. What it does not do: it filters by name, not by content. It
+//!   does not look inside a tunnel, so an allowed host can still receive whatever the agent
+//!   sends it (its own login, a key, the files it reads). It does not check that a plain
+//!   request's `Host` header matches its address, and it does not stop an allowed host that
+//!   fronts for others. The allow list is the person's decision, never a default.
 //! - `Host`: the host's network, unfiltered. Weaker: the agent can reach any address and can send
 //!   whatever it holds (its own login, a key) anywhere. It also shares the network namespace
 //!   itself, which means every loopback service of the host, and the abstract unix sockets (they
 //!   live in the network namespace, not the file system): an abstract X11 or D-Bus socket
-//!   is reachable even though `/tmp` and `/run` are empty. The only filtered way out here
-//!   is `EndpointOnly` (one forwarded endpoint). There is no per-host allow-list proxy in this
-//!   crate: a general egress proxy is a known gap, and `Host` should be chosen per program by
-//!   the person, never as a default.
+//!   is reachable even though `/tmp` and `/run` are empty. The filtered ways out are
+//!   `EndpointOnly` (one forwarded endpoint) and `Allowlist` (named hosts); `Host` should be
+//!   chosen per program by the person, never as a default.
 
 use crate::AbsPath;
+use crate::sandbox::EnvVar;
 use serde::{Deserialize, Serialize};
 
 /// Where a host keeps the resolver file `/etc/resolv.conf` points at, when it is a link into a
@@ -50,6 +61,8 @@ pub enum NetworkMode {
     None,
     /// Only the model endpoint the caller opens for the session.
     EndpointOnly,
+    /// Only the hosts an egress policy allows, through a filtering proxy.
+    Allowlist,
     /// The host's network.
     Host,
 }
@@ -85,13 +98,17 @@ pub enum AgentNet {
     None,
     /// The forwarder and its socket.
     Endpoint(EndpointBind),
+    /// The same forwarder and socket, served outside by the filtering proxy.
+    Allowlist(EndpointBind),
     /// The host's network.
     Host,
 }
 
 /// Why a mode could not be made into a plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("the endpoint-only mode needs an endpoint, and the other modes take none")]
+#[error(
+    "the endpoint-only and allow-list modes need a forwarder bind, and the other modes take none"
+)]
 #[non_exhaustive]
 pub struct NetFault;
 
@@ -103,6 +120,7 @@ impl AgentNet {
             (NetworkMode::None, None) => Ok(AgentNet::None),
             (NetworkMode::Host, None) => Ok(AgentNet::Host),
             (NetworkMode::EndpointOnly, Some(bind)) => Ok(AgentNet::Endpoint(bind)),
+            (NetworkMode::Allowlist, Some(bind)) => Ok(AgentNet::Allowlist(bind)),
             _ => Err(NetFault),
         }
     }
@@ -112,7 +130,38 @@ impl AgentNet {
         match self {
             AgentNet::None => NetworkMode::None,
             AgentNet::Endpoint(_) => NetworkMode::EndpointOnly,
+            AgentNet::Allowlist(_) => NetworkMode::Allowlist,
             AgentNet::Host => NetworkMode::Host,
         }
     }
+
+    /// The loopback port the agent connects to inside, when there is a forwarder.
+    pub fn port(&self) -> Option<u16> {
+        match self {
+            AgentNet::Endpoint(bind) | AgentNet::Allowlist(bind) => Some(bind.port),
+            AgentNet::None | AgentNet::Host => None,
+        }
+    }
+
+    /// The variables that make the agent use the proxy: only the allow-list mode has any.
+    /// `NO_PROXY` is empty, so nothing is exempt. `AgentRun::new` puts these into the
+    /// environment over whatever the caller gave under the same names.
+    pub fn proxy_env(&self) -> Vec<EnvVar> {
+        let AgentNet::Allowlist(bind) = self else {
+            return Vec::new();
+        };
+        let url = format!("http://127.0.0.1:{}", bind.port);
+        let var = |name: &str, value: &str| EnvVar {
+            name: name.to_owned(),
+            value: value.to_owned(),
+        };
+        let mut vars: Vec<EnvVar> = PROXY_VARS.iter().map(|n| var(n, &url)).collect();
+        vars.extend(NO_PROXY_VARS.iter().map(|n| var(n, "")));
+        vars
+    }
 }
+
+/// The variables that name the proxy, in both spellings tools read.
+const PROXY_VARS: [&str; 4] = ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"];
+/// The variables that exempt hosts from it: set, and empty.
+const NO_PROXY_VARS: [&str; 2] = ["NO_PROXY", "no_proxy"];

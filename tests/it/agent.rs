@@ -143,16 +143,73 @@ fn extra_binds_come_after_the_emptied_directories_and_keep_their_access() {
 #[test]
 fn a_mode_and_its_endpoint_must_agree() {
     let bind = EndpointBind::new(abs("/opt/f"), abs("/run/s"), 1);
-    assert!(AgentNet::of(NetworkMode::EndpointOnly, None).is_err());
-    assert!(AgentNet::of(NetworkMode::None, Some(bind.clone())).is_err());
-    assert!(AgentNet::of(NetworkMode::Host, Some(bind.clone())).is_err());
-    assert_eq!(
-        AgentNet::of(NetworkMode::EndpointOnly, Some(bind))
-            .expect("plan")
-            .mode(),
-        NetworkMode::EndpointOnly
-    );
+    for mode in [NetworkMode::EndpointOnly, NetworkMode::Allowlist] {
+        assert!(AgentNet::of(mode, None).is_err(), "{mode:?} needs a bind");
+        let plan = AgentNet::of(mode, Some(bind.clone())).expect("plan");
+        assert_eq!(plan.mode(), mode);
+        assert_eq!(plan.port(), Some(1));
+    }
+    for mode in [NetworkMode::None, NetworkMode::Host] {
+        assert!(
+            AgentNet::of(mode, Some(bind.clone())).is_err(),
+            "{mode:?} takes none"
+        );
+        assert_eq!(AgentNet::of(mode, None).expect("plan").mode(), mode);
+    }
     assert_eq!(NetworkMode::default(), NetworkMode::None);
+}
+
+/// The allow-list mode is the endpoint-only wiring (same forwarder, same socket, own namespace)
+/// plus the proxy variables, which replace anything the caller gave under those names; no other
+/// mode adds any.
+#[test]
+fn the_allow_list_mode_wires_the_forwarder_and_sets_the_proxy_variables() {
+    let bind = EndpointBind::new(abs("/opt/f"), abs("/run/s"), 3128);
+    let only = run(AgentNet::Endpoint(bind.clone()), Vec::new());
+    let list = run(AgentNet::Allowlist(bind.clone()), Vec::new());
+    let profile = Profile::bare();
+    assert_eq!(
+        agent_bwrap_args(&only, &profile),
+        agent_bwrap_args(&list, &profile)
+    );
+    assert!(
+        !agent_bwrap_args(&list, &profile)
+            .iter()
+            .any(|a| a == "--share-net")
+    );
+
+    let given = vec![
+        EnvVar {
+            name: "HTTPS_PROXY".to_owned(),
+            value: "http://elsewhere:1".to_owned(),
+        },
+        EnvVar {
+            name: "HOME".to_owned(),
+            value: "/home/u".to_owned(),
+        },
+    ];
+    let argv = Argv::new("agent", &[]).expect("argv");
+    let with = AgentRun::new(argv, abs("/work/project"), given, AgentNet::Allowlist(bind));
+    let get = |name: &str| {
+        let all: Vec<&EnvVar> = with.env.iter().filter(|v| v.name == name).collect();
+        assert!(all.len() <= 1, "{name} once");
+        all.first().map(|v| v.value.clone())
+    };
+    let url = Some("http://127.0.0.1:3128".to_owned());
+    for name in ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"] {
+        assert_eq!(get(name), url, "{name}");
+    }
+    for name in ["NO_PROXY", "no_proxy"] {
+        assert_eq!(get(name), Some(String::new()), "{name}");
+    }
+    assert_eq!(
+        get("HOME"),
+        Some("/home/u".to_owned()),
+        "other variables stay"
+    );
+    for net in [AgentNet::None, AgentNet::Host] {
+        assert_eq!(net.proxy_env(), Vec::new(), "{net:?}");
+    }
 }
 
 #[test]
