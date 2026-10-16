@@ -13,9 +13,16 @@ publish = false
 name = "bulkhead-forward"
 path = "src/bin/bulkhead-forward.rs"
 
+[[bin]]
+name = "bulkhead-enter"
+path = "src/bin/bulkhead-enter.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

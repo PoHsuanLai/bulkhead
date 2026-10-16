@@ -72,6 +72,11 @@ impl Profile {
         self.root.args()
     }
 
+    /// The paths the root makes visible read-only.
+    pub(crate) fn root_reads(&self) -> Vec<AbsPath> {
+        self.root.reads()
+    }
+
     /// Bubblewrap reads a seccomp filter from descriptor 3. Whoever starts the process must
     /// provide it (`BwrapSandbox` does); with this set and no filter, bubblewrap refuses to run.
     #[must_use]

@@ -5,9 +5,9 @@
 //!   environment); `FakeSandbox` records what it was asked and answers from a script.
 //! - `Shell`: the terminal table over a sandbox. It never runs a command unsandboxed; when the
 //!   sandbox cannot confine one it refuses with the reason.
-//! - `agent`, `net`, `forward`, `egress`: the confinement of a long-running agent process: its
+//! - `agent`, `net`, `forward`, `egress`, `enter`: the confinement of a long-running agent process: its
 //!   bubblewrap arguments, the four network modes, the forwarder and bridge of the endpoint-only mode,
-//!   and the filtering proxy of the allow-list mode.
+//!   the filtering proxy of the allow-list mode, and the Landlock exec stage inside the sandbox.
 //! - `redact`, `Tail`, `shown`: output is bounded and secrets are masked before anyone reads it.
 //! - `sandbox_env`: the environment is cleared and rebuilt from an allowlist.
 //!
@@ -23,6 +23,7 @@ pub mod cli;
 mod confinement;
 #[cfg(unix)]
 pub mod egress;
+pub mod enter;
 mod env;
 pub mod fake;
 mod fds;
@@ -48,6 +49,7 @@ pub use agent::{
 pub use apparmor::{RESTRICT_USERNS, namespaces_refused, refusal_at};
 pub use bwrap::{BwrapSandbox, Detected, bwrap_args};
 pub use bwrap_job::BwrapJob;
+pub use enter::{EnterFault, EnterPlan, INSIDE_ENTER, LandlockLevel, NetRule};
 pub use env::{SANDBOX_HOME, SANDBOX_PATH, dropped, sandbox_env};
 pub use fds::{InheritedFds, inherited_fds};
 pub use harden::{AcceptNoLimits, Bytes, Hardening, LimitPolicy, Limits, OptDir, Seccomp};

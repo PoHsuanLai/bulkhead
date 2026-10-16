@@ -74,6 +74,21 @@ impl Root {
         self
     }
 
+    /// The paths the words of [`Root::args`] make visible read-only: what the exec stage may read
+    /// and execute. Built from the same lists, so the two cannot drift. A path the host lacks is
+    /// listed anyway; the stage skips it.
+    pub(crate) fn reads(&self) -> Vec<AbsPath> {
+        let fixed = ["/usr", "/etc"]
+            .into_iter()
+            .chain(SYSTEM_DIRS.iter().copied());
+        let opt = (self.opt == OptDir::ReadOnly).then_some("/opt");
+        fixed
+            .chain(opt)
+            .filter_map(|p| AbsPath::parse(p).ok())
+            .chain(self.extra_ro.iter().cloned())
+            .collect()
+    }
+
     /// The bubblewrap words that build the visible part of the root.
     pub(crate) fn args(&self) -> Vec<String> {
         let mut args: Vec<String> = ["--ro-bind", "/usr", "/usr"].map(str::to_owned).to_vec();

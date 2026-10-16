@@ -12,6 +12,7 @@
 //! no capabilities; a new session; death with its parent.
 
 use crate::confinement::{Share, confinement};
+use crate::enter::{INSIDE_ENTER, plan_for};
 use crate::net::{AgentNet, EndpointBind};
 use crate::profile::Profile;
 use crate::sandbox::{Argv, EnvVar};
@@ -76,6 +77,10 @@ pub struct AgentRun {
     /// Paths inside `cwd` made read-only again after the workspace is bound writable (a `.git`
     /// directory, say). Added with `with_protect`.
     pub protect: Vec<AbsPath>,
+    /// The exec stage program on the host (read-only inside). When set, bubblewrap starts it
+    /// and it applies Landlock to itself before it starts the agent (see `enter`). Added with
+    /// `with_landlock`.
+    pub enter: Option<AbsPath>,
 }
 
 /// Why a path cannot be protected.
@@ -117,7 +122,16 @@ impl AgentRun {
             binds: Vec::new(),
             overlays: Vec::new(),
             protect: Vec::new(),
+            enter: None,
         }
+    }
+
+    /// The same run, started through the exec stage at `enter` (the `bulkhead-enter` program),
+    /// which applies Landlock inside the sandbox and reports the level it reached.
+    #[must_use]
+    pub fn with_landlock(mut self, enter: AbsPath) -> Self {
+        self.enter = Some(enter);
+        self
     }
 
     /// The same run with one more extra bind, after the ones already there.
@@ -177,6 +191,9 @@ pub fn agent_bwrap_args(run: &AgentRun, profile: &Profile) -> Vec<String> {
         let path = path.as_str();
         args.extend(["--ro-bind", path, path].map(str::to_owned));
     }
+    if let Some(enter) = &run.enter {
+        args.extend(["--ro-bind", enter.as_str(), INSIDE_ENTER].map(str::to_owned));
+    }
     if let AgentNet::Endpoint(bind) | AgentNet::Allowlist(bind) = &run.net {
         args.extend([
             "--ro-bind".to_owned(),
@@ -188,7 +205,7 @@ pub fn agent_bwrap_args(run: &AgentRun, profile: &Profile) -> Vec<String> {
         ]);
     }
     args.push("--".to_owned());
-    args.extend(inner(run));
+    args.extend(inner(run, profile));
     args
 }
 
@@ -197,13 +214,21 @@ fn protectable(path: &AbsPath) -> bool {
     std::fs::symlink_metadata(path.as_str()).is_ok_and(|m| !m.file_type().is_symlink())
 }
 
-/// The words bubblewrap runs: the agent itself, or the forwarder that starts it.
-fn inner(run: &AgentRun) -> Vec<String> {
-    match &run.net {
-        AgentNet::Endpoint(bind) | AgentNet::Allowlist(bind) => {
-            forwarder_words(bind, run.argv.words())
+/// The words bubblewrap runs: the agent itself, behind the exec stage when there is one, behind
+/// the forwarder when the mode has one.
+fn inner(run: &AgentRun, profile: &Profile) -> Vec<String> {
+    let agent = match &run.enter {
+        Some(_) => {
+            let mut words = vec![INSIDE_ENTER.to_owned()];
+            words.extend(plan_for(run, profile).words());
+            words.extend(run.argv.words().iter().cloned());
+            words
         }
-        AgentNet::None | AgentNet::Host => run.argv.words().to_vec(),
+        None => run.argv.words().to_vec(),
+    };
+    match &run.net {
+        AgentNet::Endpoint(bind) | AgentNet::Allowlist(bind) => forwarder_words(bind, &agent),
+        AgentNet::None | AgentNet::Host => agent,
     }
 }
 

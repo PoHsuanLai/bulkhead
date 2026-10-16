@@ -55,7 +55,12 @@ refused, a bad working directory), `Shell` refuses and says why.
   unspecified unless that exact address is listed, and connects to the address it checked.
   `AgentRun::new` sets `HTTPS_PROXY`, `HTTP_PROXY` (both cases) and an empty `NO_PROXY`. It
   filters by name, not content: an allowed host still receives whatever the agent sends it.
-
+- `enter` and `bulkhead-enter`: an optional exec stage (`AgentRun::with_landlock`) that bubblewrap
+  runs first. It applies a Landlock ruleset to itself (read and execute where the root is read-only,
+  write only in the workspace and the private scratch places, TCP connect only to the forwarder's
+  port or nowhere), prints `bulkhead-enter: landlock=full|files-only|none` on standard error
+  (`LandlockLevel::from_report_line` reads it), and execs the agent. On a kernel without Landlock
+  or without its network rules it still runs the agent, and says so in that line.
 
 ## Ubuntu 24.04 and later: AppArmor
 
