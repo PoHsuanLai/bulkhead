@@ -56,7 +56,7 @@ pub use harden::{AcceptNoLimits, Bytes, Hardening, LimitPolicy, Limits, OptDir, 
 pub use launch::{Enforcement, UserSession};
 pub use net::{AgentNet, EndpointBind, NetFault, NetworkMode, RESOLVER_FILES};
 pub use output::{Shown, Tail, shown};
-pub use path::{AbsPath, PathFault, RootState};
+pub use path::{AbsPath, Cover, PathFault, RootState};
 pub use profile::Profile;
 pub use redact::{MASK, redact};
 pub use sandbox::{

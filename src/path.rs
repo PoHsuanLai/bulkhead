@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A directory (or file) as an absolute, normalised path: no `.` or `..` steps, no empty
-/// components, no trailing slash.
+/// components, no trailing slash. Compared by whole components, so `/a/b` does not cover `/a/bc`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct AbsPath(String);
@@ -24,6 +24,16 @@ pub enum PathFault {
     /// It is not valid UTF-8, so it cannot be held as text.
     #[error("a path must be valid UTF-8")]
     NotUtf8,
+}
+
+/// Whether one path covers another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Cover {
+    /// The other path is this one or lies below it.
+    Covers,
+    /// It lies elsewhere.
+    Misses,
 }
 
 /// Whether a path is `/`.
@@ -67,6 +77,43 @@ impl AbsPath {
         } else {
             RootState::Below
         }
+    }
+
+    /// Whether `other` is this path or lies below it, by whole components.
+    pub fn covers(&self, other: &AbsPath) -> Cover {
+        let under = match self.is_root() {
+            RootState::Root => true,
+            RootState::Below => other
+                .0
+                .strip_prefix(&self.0)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/')),
+        };
+        if under { Cover::Covers } else { Cover::Misses }
+    }
+
+    /// The directory above, none for `/`.
+    pub fn parent(&self) -> Option<AbsPath> {
+        let cut = self.0.rfind('/')?;
+        match self.is_root() {
+            RootState::Root => None,
+            RootState::Below => Some(AbsPath(if cut == 0 {
+                "/".to_owned()
+            } else {
+                self.0[..cut].to_owned()
+            })),
+        }
+    }
+
+    /// The deepest path that covers both.
+    pub fn common(&self, other: &AbsPath) -> AbsPath {
+        let mut here = Some(self.clone());
+        while let Some(path) = here {
+            if path.covers(other) == Cover::Covers {
+                return path;
+            }
+            here = path.parent();
+        }
+        AbsPath("/".to_owned())
     }
 }
 
