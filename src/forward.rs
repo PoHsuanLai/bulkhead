@@ -135,21 +135,26 @@ impl Loopback {
     }
 }
 
-/// The host side: a unix socket whose every connection goes to one loopback address. Dropping it
-/// stops accepting and removes the socket file.
+/// A unix socket whose accepted connections are handed to `serve`, at most [`MAX_LIVE`] at once.
+/// Dropping it stops accepting and removes the socket file. The one copy of that shutdown for
+/// [`Bridge`] and the egress proxy.
 #[derive(Debug)]
-pub struct Bridge {
+pub(crate) struct Listening {
     path: PathBuf,
     stop: Arc<AtomicBool>,
 }
 
-impl Bridge {
-    /// Listens on `path` (which must not exist) and bridges to `target`.
-    pub fn start(path: &Path, target: Loopback) -> io::Result<Self> {
+impl Listening {
+    /// Listens on `path` (which must not exist). Each accepted connection comes with its slot
+    /// in `serve`, which runs on the accepting thread and decides what runs on a thread of its own.
+    pub(crate) fn start(
+        path: &Path,
+        serve: impl Fn(UnixStream, Held) + Send + 'static,
+    ) -> io::Result<Self> {
         let listener = UnixListener::bind(path)?;
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
-        // Detached: dropping the bridge wakes the thread and does not wait for it, so a bridge
+        // Detached: dropping the listening end wakes the thread and does not wait for it, so one
         // dropped after its directory was removed cannot hang the caller.
         std::thread::spawn(move || {
             let live = Live::default();
@@ -159,13 +164,7 @@ impl Bridge {
                 }
                 let Ok(client) = incoming else { continue };
                 let Some(held) = live.take() else { continue };
-                let Ok(upstream) = TcpStream::connect(SocketAddr::V4(target.0)) else {
-                    continue;
-                };
-                std::thread::spawn(move || {
-                    splice(client, upstream);
-                    drop(held);
-                });
+                serve(client, held);
             }
         });
         Ok(Self {
@@ -175,11 +174,32 @@ impl Bridge {
     }
 }
 
-impl Drop for Bridge {
+impl Drop for Listening {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         // A connection wakes the blocked accept so the thread sees the flag.
         let _ = UnixStream::connect(&self.path);
         let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// The host side: a unix socket whose every connection goes to one loopback address. Dropping it
+/// stops accepting and removes the socket file.
+#[derive(Debug)]
+pub struct Bridge(Listening);
+
+impl Bridge {
+    /// Listens on `path` (which must not exist) and bridges to `target`.
+    pub fn start(path: &Path, target: Loopback) -> io::Result<Self> {
+        Listening::start(path, move |client, held| {
+            let Ok(upstream) = TcpStream::connect(SocketAddr::V4(target.0)) else {
+                return;
+            };
+            std::thread::spawn(move || {
+                splice(client, upstream);
+                drop(held);
+            });
+        })
+        .map(Self)
     }
 }

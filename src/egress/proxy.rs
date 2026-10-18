@@ -9,13 +9,11 @@ use super::host::Host;
 use super::policy::{EgressPolicy, Refusal};
 use super::request::{BadRequest, HEAD_DEADLINE, Request, Target, parse_head, read_head};
 use super::resolve::Resolver;
-use crate::forward::{Duplex, Live, splice};
+use crate::forward::{Duplex, Listening, splice};
 use std::io::{self, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::os::unix::net::UnixListener;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// How long one connect attempt may take.
@@ -188,44 +186,18 @@ fn reply_established<W: Write>(to: &mut W) {
 /// The host side: a unix socket whose every connection is served by a [`Gate`]. Dropping it
 /// stops accepting and removes the socket file.
 #[derive(Debug)]
-pub struct Proxy {
-    path: PathBuf,
-    stop: Arc<AtomicBool>,
-}
+pub struct Proxy(Listening);
 
 impl Proxy {
     /// Listens on `path` (which must not exist) and serves each connection through `gate`.
     pub fn start(path: &Path, gate: Gate) -> io::Result<Self> {
-        let listener = UnixListener::bind(path)?;
-        let stop = Arc::new(AtomicBool::new(false));
-        let flag = stop.clone();
-        // Detached, like the bridge: dropping the proxy wakes the thread and does not wait.
-        std::thread::spawn(move || {
-            let live = Live::default();
-            for incoming in listener.incoming() {
-                if flag.load(Ordering::SeqCst) {
-                    break;
-                }
-                let Ok(client) = incoming else { continue };
-                let Some(held) = live.take() else { continue };
-                let gate = gate.clone();
-                std::thread::spawn(move || {
-                    gate.serve(client);
-                    drop(held);
-                });
-            }
-        });
-        Ok(Self {
-            path: path.to_owned(),
-            stop,
+        Listening::start(path, move |client, held| {
+            let gate = gate.clone();
+            std::thread::spawn(move || {
+                gate.serve(client);
+                drop(held);
+            });
         })
-    }
-}
-
-impl Drop for Proxy {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
-        let _ = std::os::unix::net::UnixStream::connect(&self.path);
-        let _ = std::fs::remove_file(&self.path);
+        .map(Self)
     }
 }
