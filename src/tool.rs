@@ -8,7 +8,7 @@
 use crate::env::sandbox_env;
 use crate::output::{Shown, shown};
 use crate::sandbox::{Argv, ByteLimit, ExitReport, Job, Network, RunSpec, Sandbox, StartFault};
-use crate::{AbsPath, CannotSandbox, SandboxState};
+use crate::{AbsPath, SandboxState};
 use std::collections::BTreeMap;
 
 /// Output kept when the requester names no limit.
@@ -68,35 +68,15 @@ impl Launch {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ShellFault {
-    /// The command cannot be sandboxed; nothing ran.
-    #[error("cannot sandbox: {0}")]
-    CannotSandbox(CannotSandbox),
-    /// The sandbox program did not start.
-    #[error("the sandbox program did not start")]
-    Spawn,
-    /// A file descriptor above 2 is not close-on-exec and would leak into the sandbox.
-    #[error("an inheritable file descriptor would leak into the sandbox")]
-    InheritedFds,
-    /// The sandbox's syscall filter file was not given.
-    #[error("the syscall filter file was not given")]
-    FilterFile,
+    /// The command did not start.
+    #[error(transparent)]
+    Start(#[from] StartFault),
     /// No such terminal (never made, or released).
     #[error("no such terminal")]
     NoSuchTerminal,
     /// Too many terminals are open.
     #[error("too many terminals are open")]
     TooMany,
-}
-
-impl From<StartFault> for ShellFault {
-    fn from(fault: StartFault) -> Self {
-        match fault {
-            StartFault::Cannot(why) => ShellFault::CannotSandbox(why),
-            StartFault::Spawn => ShellFault::Spawn,
-            StartFault::InheritedFds => ShellFault::InheritedFds,
-            StartFault::FilterFile => ShellFault::FilterFile,
-        }
-    }
 }
 
 /// A terminal's output and how it stands.

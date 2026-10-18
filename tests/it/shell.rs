@@ -3,7 +3,9 @@
 
 use bulkhead::fake::{FakeSandbox, Fate, Script};
 use bulkhead::{AbsPath, CannotSandbox};
-use bulkhead::{Argv, Cut, ExitReport, Launch, MAX_TERMINALS, Network, Shell, ShellFault};
+use bulkhead::{
+    Argv, Cut, ExitReport, Launch, MAX_TERMINALS, Network, Shell, ShellFault, StartFault,
+};
 
 fn launch(line: &[&str]) -> Launch {
     let words: Vec<String> = line.iter().map(|s| (*s).to_owned()).collect();
@@ -43,7 +45,7 @@ fn a_withheld_sandbox_refuses_and_runs_nothing() {
         let mut shell = Shell::new(sandbox);
         assert_eq!(
             shell.create(&launch(&["ls"])),
-            Err(ShellFault::CannotSandbox(why))
+            Err(ShellFault::Start(StartFault::Cannot(why)))
         );
         assert!(seen.started().is_empty());
         assert_eq!(shell.open(), 0);
