@@ -136,8 +136,9 @@ enum How {
     Scope {
         program: PathBuf,
         session: UserSession,
+        limits: Limits,
     },
-    Rlimit,
+    Rlimit(Limits),
     Nothing,
 }
 
@@ -145,7 +146,6 @@ enum How {
 #[derive(Debug, Clone)]
 pub(crate) struct Launcher {
     how: How,
-    limits: Option<Limits>,
 }
 
 fn find(path: &str, name: &str) -> Option<PathBuf> {
@@ -203,10 +203,7 @@ impl Launcher {
         session: &UserSession,
     ) -> Result<Self, CannotSandbox> {
         match policy {
-            LimitPolicy::Unlimited(_) => Ok(Self {
-                how: How::Nothing,
-                limits: None,
-            }),
+            LimitPolicy::Unlimited(_) => Ok(Self { how: How::Nothing }),
             LimitPolicy::Rlimit(limits) => {
                 if !limits.usable() {
                     return Err(CannotSandbox::BadLimits);
@@ -215,8 +212,7 @@ impl Launcher {
                     return Err(CannotSandbox::LimitsUnavailable);
                 }
                 Ok(Self {
-                    how: How::Rlimit,
-                    limits: Some(limits.clone()),
+                    how: How::Rlimit(limits.clone()),
                 })
             }
             LimitPolicy::Cgroup(limits) => {
@@ -231,8 +227,8 @@ impl Launcher {
                     how: How::Scope {
                         program,
                         session: session.clone(),
+                        limits: limits.clone(),
                     },
-                    limits: Some(limits.clone()),
                 })
             }
         }
@@ -241,22 +237,28 @@ impl Launcher {
     pub(crate) fn enforcement(&self) -> Enforcement {
         match self.how {
             How::Scope { .. } => Enforcement::Cgroup,
-            How::Rlimit => Enforcement::Rlimit,
+            How::Rlimit(_) => Enforcement::Rlimit,
             How::Nothing => Enforcement::Unlimited,
         }
     }
 
     pub(crate) fn limits(&self) -> Option<&Limits> {
-        self.limits.as_ref()
+        match &self.how {
+            How::Scope { limits, .. } | How::Rlimit(limits) => Some(limits),
+            How::Nothing => None,
+        }
     }
 
     /// The `(cpu seconds, address space KiB)` words for the script; `-` where not set.
     fn rlimit_words(&self) -> (String, String) {
         let none = || "-".to_owned();
-        match (&self.how, &self.limits) {
-            (How::Scope { .. }, Some(l)) => (l.cpu_seconds.to_string(), none()),
-            (How::Rlimit, Some(l)) => (l.cpu_seconds.to_string(), (l.memory.0 / 1024).to_string()),
-            _ => (none(), none()),
+        match &self.how {
+            How::Scope { limits, .. } => (limits.cpu_seconds.to_string(), none()),
+            How::Rlimit(limits) => (
+                limits.cpu_seconds.to_string(),
+                (limits.memory.0 / 1024).to_string(),
+            ),
+            How::Nothing => (none(), none()),
         }
     }
 
@@ -275,13 +277,17 @@ impl Launcher {
             c
         } else {
             let (cpu, vm) = self.rlimit_words();
-            let mut c = match (&self.how, &self.limits) {
-                (How::Scope { program, session }, Some(limits)) => {
+            let mut c = match &self.how {
+                How::Scope {
+                    program,
+                    session,
+                    limits,
+                } => {
                     let mut c = scope_command(program, session, limits);
                     c.arg(SH);
                     c
                 }
-                _ => Command::new(SH),
+                How::Rlimit(_) | How::Nothing => Command::new(SH),
             };
             c.args(["-c", SCRIPT, "sh"])
                 .arg(feed.word())
@@ -329,13 +335,6 @@ mod tests {
             "--".to_owned(),
             "true".to_owned(),
         ]
-    }
-
-    fn launcher(how: How, limits: Limits) -> Launcher {
-        Launcher {
-            how,
-            limits: Some(limits),
-        }
     }
 
     /// The script hands on only the kept names: what `systemd-run` or the caller's shell added
@@ -388,7 +387,9 @@ mod tests {
         assert_eq!(c.get_program(), "/usr/bin/bwrap", "step unlimited: direct");
         assert_eq!(words(&c), args(), "step unlimited: arguments untouched");
 
-        let rl = launcher(How::Rlimit, limits.clone());
+        let rl = Launcher {
+            how: How::Rlimit(limits.clone()),
+        };
         let c = rl.command(bwrap, &args(), &Feed::FromStdin, Env::Minimal);
         assert_eq!(c.get_program(), SH, "step rlimit: through sh");
         let w = words(&c);
@@ -398,13 +399,13 @@ mod tests {
             "step rlimit: cpu seconds and address space in KiB"
         );
 
-        let scope = launcher(
-            How::Scope {
+        let scope = Launcher {
+            how: How::Scope {
                 program: PathBuf::from("/usr/bin/systemd-run"),
                 session: UserSession::default(),
+                limits,
             },
-            limits,
-        );
+        };
         let c = scope.command(bwrap, &args(), &Feed::NoFilter, Env::Minimal);
         let w = words(&c);
         for want in [
