@@ -43,6 +43,12 @@ fn allowed(name: &str) -> bool {
     name_ok(name) && (ALLOWED.contains(&name) || name.starts_with("LC_"))
 }
 
+/// Whether a requested variable is passed on: an allowed name and a short value with no control
+/// character. The one rule behind both [`sandbox_env`] and [`dropped`].
+fn kept(name: &str, value: &str) -> bool {
+    allowed(name) && value.len() <= VALUE_MAX && !value.chars().any(char::is_control)
+}
+
 fn var(name: &str, value: &str) -> EnvVar {
     EnvVar {
         name: name.to_owned(),
@@ -61,9 +67,7 @@ pub fn sandbox_env(requested: &[(String, String)]) -> Vec<EnvVar> {
         var("TERM", "dumb"),
     ];
     for (name, value) in requested {
-        let fine =
-            allowed(name) && value.len() <= VALUE_MAX && !value.chars().any(char::is_control);
-        if !fine {
+        if !kept(name, value) {
             continue;
         }
         env.retain(|v| &v.name != name);
@@ -76,7 +80,7 @@ pub fn sandbox_env(requested: &[(String, String)]) -> Vec<EnvVar> {
 pub fn dropped(requested: &[(String, String)]) -> Vec<String> {
     requested
         .iter()
-        .filter(|(n, v)| !(allowed(n) && v.len() <= VALUE_MAX && !v.chars().any(char::is_control)))
+        .filter(|(n, v)| !kept(n, v))
         .map(|(n, _)| n.clone())
         .collect()
 }

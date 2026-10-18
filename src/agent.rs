@@ -11,7 +11,7 @@
 //! the bubblewrap process, never in its arguments, so a key is not on a command line);
 //! no capabilities; a new session; death with its parent.
 
-use crate::confinement::{Share, confinement};
+use crate::confinement::confinement;
 use crate::enter::{INSIDE_ENTER, plan_for};
 use crate::net::{AgentNet, EndpointBind};
 use crate::profile::Profile;
@@ -168,11 +168,7 @@ impl AgentRun {
 
 /// The `bwrap` arguments for `run`. Pure.
 pub fn agent_bwrap_args(run: &AgentRun, profile: &Profile) -> Vec<String> {
-    let share = match run.net {
-        AgentNet::Host => Share::HostNet,
-        AgentNet::None | AgentNet::Endpoint(_) | AgentNet::Allowlist(_) => Share::Nothing,
-    };
-    let mut args = confinement(share, profile);
+    let mut args = confinement(run.net.network(), profile);
     for bind in &run.binds {
         let flag = match bind.access {
             Access::ReadOnly => "--ro-bind",
@@ -194,7 +190,7 @@ pub fn agent_bwrap_args(run: &AgentRun, profile: &Profile) -> Vec<String> {
     if let Some(enter) = &run.enter {
         args.extend(["--ro-bind", enter.as_str(), INSIDE_ENTER].map(str::to_owned));
     }
-    if let AgentNet::Endpoint(bind) | AgentNet::Allowlist(bind) = &run.net {
+    if let Some(bind) = run.net.bind() {
         args.extend([
             "--ro-bind".to_owned(),
             bind.forwarder.as_str().to_owned(),
@@ -226,9 +222,9 @@ fn inner(run: &AgentRun, profile: &Profile) -> Vec<String> {
         }
         None => run.argv.words().to_vec(),
     };
-    match &run.net {
-        AgentNet::Endpoint(bind) | AgentNet::Allowlist(bind) => forwarder_words(bind, &agent),
-        AgentNet::None | AgentNet::Host => agent,
+    match run.net.bind() {
+        Some(bind) => forwarder_words(bind, &agent),
+        None => agent,
     }
 }
 

@@ -12,24 +12,16 @@
 
 use crate::net::resolver_binds;
 use crate::profile::Profile;
-
-/// Whether the sandbox shares the host's network namespace.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Share {
-    /// A namespace of its own with no interface.
-    Nothing,
-    /// The host's network, and the resolver files it needs.
-    HostNet,
-}
+use crate::sandbox::Network;
 
 fn words(list: &[&str]) -> Vec<String> {
     list.iter().map(|s| (*s).to_owned()).collect()
 }
 
 /// The shared arguments. Pure.
-pub(crate) fn confinement(share: Share, profile: &Profile) -> Vec<String> {
+pub(crate) fn confinement(network: Network, profile: &Profile) -> Vec<String> {
     let mut args = words(&["--die-with-parent", "--new-session", "--unshare-all"]);
-    if share == Share::HostNet {
+    if network == Network::Host {
         args.push("--share-net".to_owned());
     }
     args.extend(words(&["--cap-drop", "ALL"]));
@@ -37,7 +29,7 @@ pub(crate) fn confinement(share: Share, profile: &Profile) -> Vec<String> {
     args.extend(profile.root());
     args.extend(words(&["--dev", "/dev", "--proc", "/proc"]));
     args.extend(profile.scratch());
-    if share == Share::HostNet {
+    if network == Network::Host {
         args.extend(resolver_binds());
     }
     args
@@ -47,34 +39,34 @@ pub(crate) fn confinement(share: Share, profile: &Profile) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// Both shares share the prefix (capabilities dropped, the allow-list root); only
-    /// the host network adds `--share-net`. Each step names its share in the failure message.
+    /// Both networks share the prefix (capabilities dropped, the allow-list root); only
+    /// the host network adds `--share-net`. Each step names its network in the failure message.
     #[test]
     fn the_prefix_is_shared_and_only_the_host_network_shares_the_net_namespace() {
-        let cases = [(Share::Nothing, false), (Share::HostNet, true)];
-        for (share, shares_net) in cases {
-            let args = confinement(share, &Profile::bare());
+        let cases = [(Network::Off, false), (Network::Host, true)];
+        for (network, shares_net) in cases {
+            let args = confinement(network, &Profile::bare());
             assert_eq!(
                 &args[..3],
                 ["--die-with-parent", "--new-session", "--unshare-all"],
-                "{share:?}: prefix"
+                "{network:?}: prefix"
             );
             assert!(
                 args.windows(2).any(|w| w == ["--cap-drop", "ALL"]),
-                "{share:?}: cap-drop"
+                "{network:?}: cap-drop"
             );
             assert!(
                 args.windows(3).any(|w| w == ["--ro-bind", "/usr", "/usr"]),
-                "{share:?}: /usr bound"
+                "{network:?}: /usr bound"
             );
             assert!(
                 !args.iter().any(|a| a == "/home" || a == "/"),
-                "{share:?}: no /home and no whole root"
+                "{network:?}: no /home and no whole root"
             );
             assert_eq!(
                 args.contains(&"--share-net".to_owned()),
                 shares_net,
-                "{share:?}: --share-net"
+                "{network:?}: --share-net"
             );
         }
     }

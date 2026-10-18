@@ -26,7 +26,7 @@
 //!   chosen per program by the person, never as a default.
 
 use crate::AbsPath;
-use crate::sandbox::EnvVar;
+use crate::sandbox::{EnvVar, Network};
 use serde::{Deserialize, Serialize};
 
 /// Where a host keeps the resolver file `/etc/resolv.conf` points at, when it is a link into a
@@ -135,11 +135,25 @@ impl AgentNet {
         }
     }
 
+    /// The forwarder bind, for the two modes that have one.
+    pub fn bind(&self) -> Option<&EndpointBind> {
+        match self {
+            AgentNet::Endpoint(bind) | AgentNet::Allowlist(bind) => Some(bind),
+            AgentNet::None | AgentNet::Host => None,
+        }
+    }
+
     /// The loopback port the agent connects to inside, when there is a forwarder.
     pub fn port(&self) -> Option<u16> {
+        self.bind().map(|bind| bind.port)
+    }
+
+    /// The network namespace this plan gives the sandbox: the host's for `Host`, a namespace of
+    /// its own for every other mode.
+    pub(crate) fn network(&self) -> Network {
         match self {
-            AgentNet::Endpoint(bind) | AgentNet::Allowlist(bind) => Some(bind.port),
-            AgentNet::None | AgentNet::Host => None,
+            AgentNet::Host => Network::Host,
+            AgentNet::None | AgentNet::Endpoint(_) | AgentNet::Allowlist(_) => Network::Off,
         }
     }
 

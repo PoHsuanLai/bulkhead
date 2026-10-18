@@ -14,7 +14,7 @@
 use crate::agent::{AgentRun, agent_bwrap_args};
 use crate::apparmor::{RESTRICT_USERNS, refusal_at};
 use crate::bwrap_job::BwrapJob;
-use crate::confinement::{Share, confinement};
+use crate::confinement::confinement;
 use crate::fds::{InheritedFds, inherited_fds};
 use crate::harden::{Hardening, Seccomp};
 use crate::launch::{Enforcement, Env, Feed, Launcher, UserSession};
@@ -32,11 +32,7 @@ use std::process::{Command, Stdio};
 /// allowlist with no secret. The agent sandbox passes its environment on the process instead.
 pub fn bwrap_args(spec: &RunSpec, profile: &Profile) -> Vec<String> {
     let cwd = spec.cwd.as_str();
-    let share = match spec.network {
-        Network::Host => Share::HostNet,
-        Network::Off => Share::Nothing,
-    };
-    let mut args = confinement(share, profile);
+    let mut args = confinement(spec.network, profile);
     // The working directory goes in after the emptied directories, so it shows through them.
     args.extend(["--bind", cwd, cwd, "--chdir", cwd, "--clearenv"].map(str::to_owned));
     for var in &spec.env {
