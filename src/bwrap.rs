@@ -19,7 +19,7 @@ use crate::fds::{InheritedFds, inherited_fds};
 use crate::harden::{Hardening, Seccomp};
 use crate::launch::{Enforcement, Env, Feed, Launcher, UserSession};
 use crate::profile::Profile;
-use crate::sandbox::{Network, RunSpec, Sandbox, StartFault};
+use crate::sandbox::{RunSpec, Sandbox, StartFault};
 use crate::seccomp::default_filter;
 use crate::{AbsPath, CannotSandbox, RootState, SandboxState};
 use std::path::{Path, PathBuf};

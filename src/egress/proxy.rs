@@ -186,7 +186,9 @@ fn reply_established<W: Write>(to: &mut W) {
 /// The host side: a unix socket whose every connection is served by a [`Gate`]. Dropping it
 /// stops accepting and removes the socket file.
 #[derive(Debug)]
-pub struct Proxy(Listening);
+pub struct Proxy {
+    _listening: Listening,
+}
 
 impl Proxy {
     /// Listens on `path` (which must not exist) and serves each connection through `gate`.
@@ -198,6 +200,8 @@ impl Proxy {
                 drop(held);
             });
         })
-        .map(Self)
+        .map(|listening| Self {
+            _listening: listening,
+        })
     }
 }

@@ -186,7 +186,9 @@ impl Drop for Listening {
 /// The host side: a unix socket whose every connection goes to one loopback address. Dropping it
 /// stops accepting and removes the socket file.
 #[derive(Debug)]
-pub struct Bridge(Listening);
+pub struct Bridge {
+    _listening: Listening,
+}
 
 impl Bridge {
     /// Listens on `path` (which must not exist) and bridges to `target`.
@@ -200,6 +202,8 @@ impl Bridge {
                 drop(held);
             });
         })
-        .map(Self)
+        .map(|listening| Self {
+            _listening: listening,
+        })
     }
 }
