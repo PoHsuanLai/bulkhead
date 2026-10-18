@@ -2,11 +2,12 @@
 //! clock. A test hands the sandbox to the shell tool and keeps a `Seen` handle to look at what
 //! reached it.
 
+use crate::bwrap_job::locked;
 use crate::output::Tail;
 use crate::sandbox::{ByteLimit, Captured, ExitReport, Job, KILLED, RunSpec, Sandbox, StartFault};
 use crate::{AbsPath, CannotSandbox, SandboxState};
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
 /// Whether a scripted job ends by itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,10 +70,6 @@ pub struct Log {
 /// A shared view of the fake's log.
 #[derive(Debug, Clone, Default)]
 pub struct Seen(Arc<Mutex<Log>>);
-
-fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
-}
 
 impl Seen {
     /// Every command the sandbox was asked to run.

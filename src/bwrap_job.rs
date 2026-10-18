@@ -10,11 +10,11 @@ use crate::output::Tail;
 use crate::sandbox::{ByteLimit, Captured, ExitReport, Job, KILLED, StartFault};
 use std::io::Read;
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 
-fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
+pub(crate) fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// A started command.
@@ -27,23 +27,22 @@ pub struct BwrapJob {
 }
 
 #[cfg(unix)]
-fn signal_name(status: &ExitStatus) -> String {
+fn signal_name(status: ExitStatus) -> String {
     use std::os::unix::process::ExitStatusExt;
     match status.signal() {
-        Some(9) => KILLED.to_owned(),
+        Some(9) | None => KILLED.to_owned(),
         Some(15) => "TERM".to_owned(),
         Some(2) => "INT".to_owned(),
         Some(n) => format!("SIG{n}"),
-        None => KILLED.to_owned(),
     }
 }
 
 #[cfg(not(unix))]
-fn signal_name(_: &ExitStatus) -> String {
+fn signal_name(_: ExitStatus) -> String {
     KILLED.to_owned()
 }
 
-fn report(status: &ExitStatus) -> ExitReport {
+fn report(status: ExitStatus) -> ExitReport {
     match status.code().and_then(|c| u32::try_from(c).ok()) {
         Some(code) => ExitReport::Code(code),
         None => ExitReport::Signal(signal_name(status)),
@@ -92,7 +91,7 @@ impl BwrapJob {
         })
     }
 
-    fn finish(&mut self, status: &ExitStatus) -> ExitReport {
+    fn finish(&mut self, status: ExitStatus) -> ExitReport {
         if let Some(thread) = self.reader.take() {
             let _ = thread.join();
         }
@@ -112,7 +111,7 @@ impl Job for BwrapJob {
             return self.ended.clone();
         }
         match self.child.try_wait() {
-            Ok(Some(status)) => Some(self.finish(&status)),
+            Ok(Some(status)) => Some(self.finish(status)),
             _ => None,
         }
     }
@@ -122,7 +121,7 @@ impl Job for BwrapJob {
             return done.clone();
         }
         match self.child.wait() {
-            Ok(status) => self.finish(&status),
+            Ok(status) => self.finish(status),
             Err(_) => ExitReport::Signal(KILLED.to_owned()),
         }
     }

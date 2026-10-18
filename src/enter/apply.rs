@@ -2,6 +2,7 @@
 //! `unsafe`). Best effort by the kernel's ABI, and it says how far it got.
 
 use super::plan::{EnterPlan, LandlockLevel, NetRule};
+use crate::path::AbsPath;
 use landlock::{
     ABI, Access, AccessFs, AccessNet, LandlockStatus, NetPort, RestrictionStatus, Ruleset,
     RulesetAttr, RulesetCreatedAttr, RulesetError, RulesetStatus, path_beneath_rules,
@@ -23,15 +24,15 @@ pub fn apply(plan: &EnterPlan) -> Result<LandlockLevel, RulesetError> {
     let mut created = ruleset
         .create()?
         .add_rules(path_beneath_rules(
-            plan.read.iter().map(|p| p.as_str()),
+            plan.read.iter().map(AbsPath::as_str),
             AccessFs::from_read(ABI_TOP),
         ))?
         .add_rules(path_beneath_rules(
-            plan.write.iter().map(|p| p.as_str()),
+            plan.write.iter().map(AbsPath::as_str),
             all,
         ))?
         .add_rules(path_beneath_rules(
-            plan.device.iter().map(|p| p.as_str()),
+            plan.device.iter().map(AbsPath::as_str),
             device,
         ))?;
     if let NetRule::ConnectTo(port) = plan.net {
