@@ -7,9 +7,7 @@
 
 use super::host::Host;
 use super::policy::{EgressPolicy, Refusal};
-use super::request::{
-    BadRequest, HEAD_DEADLINE, ReadDeadline, Request, Target, parse_head, read_head,
-};
+use super::request::{BadRequest, HEAD_DEADLINE, Request, Target, parse_head, read_head};
 use super::resolve::Resolver;
 use crate::forward::{Duplex, Live, splice};
 use std::io::{self, Write};
@@ -146,7 +144,7 @@ impl Gate {
     }
 
     /// Serves one client connection: one request, then bytes both ways until either side ends.
-    pub fn serve<S: Duplex + ReadDeadline>(&self, mut client: S) {
+    pub fn serve<S: Duplex>(&self, mut client: S) {
         let head = match read_head(&mut client, HEAD_DEADLINE) {
             Ok(head) => head,
             Err(BadRequest::Closed) => return,

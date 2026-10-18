@@ -2,9 +2,8 @@
 //! (https) and `METHOD http://host[:port]/... HTTP/1.x` (plain http); anything else is refused.
 
 use super::host::{Host, HostFault};
-use std::io::{self, Read};
-use std::net::TcpStream;
-use std::os::unix::net::UnixStream;
+use crate::forward::Duplex;
+use std::io;
 use std::time::{Duration, Instant};
 
 /// The longest line (the request line, or one header) in bytes.
@@ -13,24 +12,6 @@ pub const MAX_LINE: usize = 8 * 1024;
 pub const MAX_HEAD: usize = 32 * 1024;
 /// How long the whole head may take to arrive.
 pub const HEAD_DEADLINE: Duration = Duration::from_secs(10);
-
-/// A stream whose reads can be given a time limit.
-pub trait ReadDeadline {
-    /// Reads fail with a timeout after `limit` (`None`: wait for ever).
-    fn limit_reads(&self, limit: Option<Duration>) -> io::Result<()>;
-}
-
-impl ReadDeadline for UnixStream {
-    fn limit_reads(&self, limit: Option<Duration>) -> io::Result<()> {
-        self.set_read_timeout(limit)
-    }
-}
-
-impl ReadDeadline for TcpStream {
-    fn limit_reads(&self, limit: Option<Duration>) -> io::Result<()> {
-        self.set_read_timeout(limit)
-    }
-}
 
 /// Why a request was not understood. Every one is answered with a plain 400, except a stream
 /// that closed before it said anything, which is just dropped.
@@ -127,10 +108,7 @@ fn first_line_too_long(bytes: &[u8]) -> bool {
 }
 
 /// Reads until the blank line that ends the headers, within `wait` and `MAX_HEAD`.
-pub fn read_head<S: Read + ReadDeadline>(
-    stream: &mut S,
-    wait: Duration,
-) -> Result<Head, BadRequest> {
+pub fn read_head<S: Duplex>(stream: &mut S, wait: Duration) -> Result<Head, BadRequest> {
     let deadline = Instant::now() + wait;
     let mut bytes: Vec<u8> = Vec::new();
     let mut chunk = [0_u8; 4096];

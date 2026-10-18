@@ -20,6 +20,8 @@ pub trait Duplex: Read + Write + Send + Sized + 'static {
     fn dup(&self) -> io::Result<Self>;
     /// Tells the peer no more bytes are coming.
     fn finish(&self);
+    /// Reads fail with a timeout after `limit` (`None`: wait for ever).
+    fn limit_reads(&self, limit: Option<std::time::Duration>) -> io::Result<()>;
 }
 
 impl Duplex for TcpStream {
@@ -29,6 +31,9 @@ impl Duplex for TcpStream {
     fn finish(&self) {
         let _ = self.shutdown(std::net::Shutdown::Write);
     }
+    fn limit_reads(&self, limit: Option<std::time::Duration>) -> io::Result<()> {
+        self.set_read_timeout(limit)
+    }
 }
 
 impl Duplex for UnixStream {
@@ -37,6 +42,9 @@ impl Duplex for UnixStream {
     }
     fn finish(&self) {
         let _ = self.shutdown(std::net::Shutdown::Write);
+    }
+    fn limit_reads(&self, limit: Option<std::time::Duration>) -> io::Result<()> {
+        self.set_read_timeout(limit)
     }
 }
 
